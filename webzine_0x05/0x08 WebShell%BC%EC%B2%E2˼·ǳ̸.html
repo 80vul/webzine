@@ -1,0 +1,162 @@
+﻿<html>
+<head>
+<meta content="text/html; charset=utf-8" http-equiv="Content-Type">		
+<title>WebShell检测思路浅谈</title>
+</head>
+<body>
+<h4>WebShell检测思路浅谈</h4>
+<pre style="width: 100%; word-wrap:break-word;">
+Author: lake2 [80SEC][TSRC]
+EMail:  lake2[at]foxmail.com
+Site:   http://www.0x54.org
+Date:   2010-12-19
+
+
+[目录]
+
+0x00  前言
+0x01  Webshell检测模型
+0x02  静态特征检测
+0x03  动态特征检测
+0x04  结语
+
+
+0x00  前言
+
+    什么是webshell？我相信如果看官能有兴趣看这篇文章，一定对webshell有个了解。不
+过不了解也没关系，那就请先搜索下相关资料[1]。当然，本着“know it then hack it”
+的原则，建议你还是搭个环境，熟悉下先，毕竟纸上谈兵是要不得的。
+
+    随着网络的发展，Web站点的增加，webshell这种脚本后门技术也发展起来了，多少黑
+客故事都是从一个小小的webshell开始的。所以对于网站，特别是站点和应用众多的互联网
+企业，能够在出现webshell的阶段及时发现和响应就显得尤为重要。
+
+    本文以笔者多年从事相关工作的经验来探讨下webshell的检测手段。
+
+
+0x01  Webshell检测模型
+
+    记得当年第一个ASP木马出来的时候号称“永不被杀的ASP木马”（请大家虔诚地起立，
+我们一起来膜拜一下海洋顶端ASP木马之父LCX大叔），因为它使用正常端口，且脚本容易变
+形，使得查杀它变得困难。但是，Webshell这种特殊的Web应用程序也有两个命门：文件和
+HTTP请求。
+
+    我们先来看下Webshell的运行流程：hacker -&gt; HTTP Protocol -&gt; Web Server -&gt; CGI。
+简单来看就是这样一个顺序：黑客通过浏览器以HTTP协议访问Web Server上的一个CGI文件。
+棘手的是，webshell就是一个合法的TCP连接，在TCP/IP的应用层之下没有任何特征（当然
+不是绝对的），只有在应用层进行检测。
+
+    黑客入侵服务器，使用webshell，不管是传文件还是改文件，必然有一个文件会包含
+webshell代码，很容易想到从文件代码入手，这是静态特征检测；webshell运行后，B/S数
+据通过HTTP交互，HTTP请求/响应中可以找到蛛丝马迹，这是动态特征检测。
+
+
+0x02  静态特征检测
+
+    静态特征检测是指不执行而通过围观的方式来发现webshell，即先建立一个恶意字符串
+特征库，然后通过在各类脚本文件中检查是否匹配。这是一种最简单也是最常见的技术，高
+级一些的，可能还涉及到语义分析。笔者06年开发的“雷客图ASP站长安全助手”[2]即是通
+过此类办法查找ASP类型的webshell的。
+
+    静态特征检测面临的一个问题是误报。因为一些特征字符串正常程序本身也需要用到。
+比如PHP里面的eval、system等，ASP里面的FileSystemObject、include等。所以雷客图在
+设计之初就是一个辅助工具，最终还需要有相关安全经验的人来判定。
+
+    对于少量站点可以用这样人肉去检查，如果是一个成千上万站点的大型企业呢，这个时
+候再人肉那工作量可就大了。所以用这样一种思路：强弱特征。即把特征码分为强弱两种特
+征，强特征命中则必是webshell；弱特征由人工去判断。加入一种强特征，即把流行webshell
+用到的特征作为强特征重点监控，一旦出现这样的特征即可确认为webshell立即进行响应。
+比如PHPSpy里面会出现phpspy、wofeiwo、eval($_POST[xxx])等，ASP里面出现Shell.Application
+等。当然，黑客完全可以变形躲过，没关系，还有人工检查的弱特征。
+
+    另一个问题是漏报。程序的关键是特征字符串，它直接关系着结果，如果你的特征库里
+面没有记录的甚至是一种新的webshell代码，就可能束手无策了。雷客图第一版出来后，我
+自以为所有的ASP webshell都可以查了，但是我错了，因为不断会有新的方式出来绕过，最
+终结果就是特征被动的跟着webshell升级而升级，同时还面临未知的webshell——这个情况
+和特征码杀毒软件何其相似。
+
+    要解决误报和漏报，就不能拘泥于代码级别了。可以换个角度考虑问题：文件系统。我
+们可以结合文件的属性来判断，比如apache是noboy启动的，webshell的属主必然也是nobody，
+如果我的Web目录无缘无故多了个nobody的文件，这里就有问题了。最理想的办法是需要制度
+和流程来建设一个Web目录唯一发布入口，控制住这个入口，非法进来的Web文件自然可以发
+现。
+
+
+0x03  动态特征检测
+
+    webshell传到服务器了，黑客总要去执行它吧，webshell执行时刻表现出来的特征，我
+们称为动态特征。
+
+    先前我们说到过webshell通信是HTTP协议。只要我们把webshell特有的HTTP请求/响应
+做成特征库，加到IDS里面去检测所有的HTTP请求就好了。
+
+    这个方案有个问题就是漏报。首先你得把网上有的webshell都搜集起来抓特征，这是个
+体力活，新的webshell出来还要去更新这个库，总是很被动，被动就算了，但是一些不曾公
+开的webshell通信就会漏掉。那么这个方案有没有效果，只能说效果有限吧，对付拿来主义
+的菜鸟可以，遇到高级一些的黑客就无效了。杀毒软件都搞主动防御了，webshell也不能老
+搞特征码是吧。
+
+    webshell起来如果执行系统命令的话，会有进程。Linux下就是nobody用户起了bash，
+Win下就是IIS User启动cmd，这些都是动态特征，不过需要看黑客是否执行命令（多半会这
+样），还有就是你的服务器上要有一个功能强大的Agent。要是黑客高兴，再反连回去，这
+下就更好了，一个TCP连接（也可能是UDP），Agent和IDS都可以抓现行。这里还涉及到主机
+后门的一些检测策略，以后有机会再另文叙述。
+
+    回到网络层来，之前我们探讨过，Webshell总有一个HTTP请求，如果我在网络层监控HTTP
+请求（我没有监控Apache/IIS日志），有一天突然出现一个新的PHP文件请求或者一个平时
+是GET请求的文件突然有了POST请求，还返回的200，这里就有问题了。这种基于区别于正常
+请求的异常模型，姑且称之为HTTP异常请求模型检测。一旦有了这样的模型，除了Webshell，
+还可以发现很多问题的。
+
+    还有一个思路来自《浅谈javascript函数劫持》[3]和某款代码审计软件。回忆一下，
+我们调试网马的时候，怎么还原它各种稀奇古怪的加密算法呢，简单，把eval改成alert就
+好了！类似的，所以我们可以在CGI全局重载一些函数（比如ASP.Net的global.asax文件），
+当有webshell调用的时候就可以发现异常。例如以下ASP代码就实现了对ASP的execute函数
+的重载：
+
+--code-------------------------------------------------------------------------
+&lt;%
+Function execute(stra)
+    Response.Write(&quot;get the arg : &quot;+stra)
+End Function
+a=&quot;response.write(&quot;&quot;hello,world&quot;&quot;)&quot;
+execute(a)
+%&gt;
+-------------------------------------------------------------------------------
+
+    这个方法在应用层还是有些问题，所以如果在CGI引擎内核里面改可能会好些。根据小
+道消息，这期ph4nt0m的webzine会有一篇文章涉及PHP内核中防webshell的，有兴趣的同学
+可以关注。
+
+
+0x04  结语
+
+    本文只探讨了检测Webshell的一些思路，希望对你有些帮助，如果你有更好的方案，也
+可以和我探讨。至于一些工具和特征，由于这样那样的原因就不公开了，我始终认为，相比
+于工具，思路永远是最重要的。
+
+
+0x05  广告
+
+    到此结束，也顺便做个广告。
+
+    80SEC是一个致力于Web安全研究的团体，欢迎关注我们的最新动态，网址http://www.80sec.com
+
+    TSRC是腾讯安全应急响应中心（Tencent Security Response Center）的缩写，这是腾
+讯公司负责突发安全事件处理的团队，如果您对腾讯产品和业务有任何安全上的意见可以与
+我们联系，也欢迎有意在互联网安全行业发展的同学加入我们。
+
+    邮箱：security#tencent.com
+    主页：http://security.qzone.qq.com
+
+
+References
+
+[1] soso百科webshell，http://baike.soso.com/v35165.htm
+[2] 雷客图ASP站长安全助手，http://www.onegreen.net/code/HTML/24443.html
+[3] 浅谈javascript函数劫持，http://www.xfocus.net/articles/200712/963.html
+
+-EOF-
+</pre>
+</body>
+</html>

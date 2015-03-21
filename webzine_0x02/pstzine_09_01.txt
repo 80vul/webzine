@@ -1,0 +1,1403 @@
+//SuperImage.h
+
+#ifndef _SUPER_IMAGE_
+#define _SUPER_IMAGE_
+
+typedef short Pixel;
+
+//
+template <class T> 
+class SuperImage 
+{ 
+public:
+	SuperImage(const int w, const int h);
+	~SuperImage();
+public:
+	T* data;
+	int width;
+	int height;
+};
+
+//
+
+class EnhancedImage
+{
+public:
+	SuperImage<Pixel>* superImage;
+public:
+	EnhancedImage();
+	~EnhancedImage();
+	int load(const char* name);
+	int save(const char* name);
+	int copy(EnhancedImage* copy);
+	int film(EnhancedImage* film);
+	int binv();
+	int otsu();
+	int line();
+	int roii();
+	int trac();
+	int edge();
+	int thin();
+	int tidy();	
+	int kerf();	
+	int join();
+};
+
+#endif
+
+//SuperImage.cpp
+#include "superImage.h"
+#include "ximage.h"
+
+template <class T> 
+SuperImage<T>::SuperImage(const int w, const int h) 
+{
+	width = w;
+	height = h;
+	data = new T[w * h];
+};
+
+template <class T> 
+SuperImage<T>::~SuperImage() 
+{
+	if(data)
+	{
+		delete[] data; 
+	}
+};
+
+EnhancedImage::EnhancedImage()
+{
+	superImage=NULL;
+};
+
+EnhancedImage::~EnhancedImage()
+{
+	if(superImage)
+	{
+		delete superImage;
+	}
+};
+
+int EnhancedImage::load(const char* name)
+{
+	CxImage input;
+    input.Load(name, CXIMAGE_SUPPORT_J2K);	
+	if(!input.IsValid())
+	{
+		return 1;
+	}
+	else
+	{
+		int h=input.GetHeight();
+		int w=input.GetWidth();		
+		superImage = new SuperImage<Pixel>(w,h);
+		for(int y=0;y<h;y++)
+		{
+			for(int x=0;x<w;x++)
+			{
+				RGBQUAD rgbQUAD = CxImage::RGBtoXYZ(input.GetPixelColor(x,y));
+				Pixel pixel = 255;
+				if(true)
+				{
+					pixel = (rgbQUAD.rgbRed + rgbQUAD.rgbGreen + rgbQUAD.rgbBlue) / 3.0;
+				}
+				else
+				{
+                	double yy = (0.299 * rgbQUAD.rgbRed + 0.587 * rgbQUAD.rgbGreen + 0.114 * rgbQUAD.rgbBlue) / 256.0;
+	                pixel = (int) (219.0 * yy + 16.5);
+				}
+				superImage->data[y*w+x]=pixel;
+			}
+		}
+	}
+    return 0;
+};
+
+int EnhancedImage::save(const char* name)
+{
+	CxImage output;
+	output.Create(superImage->width,superImage->height,24,CXIMAGE_SUPPORT_BMP);  //1 4 8 24
+	for(int y=0;y<superImage->height;y++)
+	{
+		for(int x=0;x<superImage->width;x++)
+		{			
+			Pixel pixel = superImage->data[y*superImage->width + x];
+			RGBQUAD rgbQUAD;
+			if(pixel == -1)
+			{
+				rgbQUAD.rgbRed = 255;
+				rgbQUAD.rgbGreen = 0;
+				rgbQUAD.rgbBlue = 0;
+			}
+			else if(pixel == -2)
+			{
+				rgbQUAD.rgbRed = 0;
+				rgbQUAD.rgbGreen = 255;
+				rgbQUAD.rgbBlue = 0;
+			}
+			else if(pixel == -3)
+			{
+				rgbQUAD.rgbRed = 0;
+				rgbQUAD.rgbGreen = 0;
+				rgbQUAD.rgbBlue = 255;
+			}
+			else
+			{
+				rgbQUAD.rgbRed = pixel;
+				rgbQUAD.rgbGreen = pixel;
+				rgbQUAD.rgbBlue =pixel;
+			}
+			output.SetPixelColor(x,y,rgbQUAD);
+		}
+	}
+	output.Save(name,CXIMAGE_SUPPORT_BMP);
+    return 0;
+};
+int EnhancedImage::copy(EnhancedImage* copy)
+{
+	int w = copy->superImage->width;
+	int h = copy->superImage->height;	
+	short* cpy = copy->superImage->data;
+	//
+	this->superImage = new SuperImage<Pixel>(w,h);
+	short* tgt = this->superImage->data;
+	//
+	for (int y=0; y<h; y++) 
+	{
+		for (int x=0; x<w; x++) 
+		{
+			tgt[w*(y)+(x)] = cpy[w*(y)+(x)];
+		}
+	}
+	return 0;
+}
+int EnhancedImage::film(EnhancedImage* film)
+{
+	int h = film->superImage->height;
+	int w = film->superImage->width;
+	short* flm = film->superImage->data;
+	short* tgt = this->superImage->data;
+	//
+	for (int y=0; y<h; y++) 
+	{
+		for (int x=0; x<w; x++) 
+		{
+			unsigned char source = flm[w*(y)+(x)];
+			unsigned char target = tgt[w*(y)+(x)];	
+			if(source < 0 || target < 0)
+			{
+                printf("x=%d  y=%d    src=%d  tgt=%d\n",x,y,source,target);
+			}
+			if(source==0 && target == 255)
+			{
+				tgt[w*(y)+(x)] = source;
+			}
+		}
+	}
+	return 0;
+}
+int EnhancedImage::binv()
+{
+	int threshold = 256 / 8 * 7;
+	for(int y2=0;y2<superImage->height;y2++)
+	{
+		for(int x2=0;x2<superImage->width;x2++)
+		{			
+			Pixel pixel = superImage->data[y2*superImage->width+x2];
+			if(pixel>=threshold)
+			{
+				superImage->data[y2*superImage->width+x2] = 255;
+			}
+			else
+			{
+				superImage->data[y2*superImage->width+x2] = 0;
+			}
+		}
+	}
+	return 0;
+};
+
+int EnhancedImage::otsu()
+{
+	int ihist[256];
+	memset(ihist, 0, sizeof(ihist));	
+	int gmin=255;
+	int gmax=0;
+	for (int y=0; y<superImage->height; y++) 
+	{
+		for (int x=0; x<superImage->width; x++) 
+		{
+			unsigned char point = superImage->data[y*superImage->width+x];
+			ihist[point]++;
+			if(point > gmax) 
+			{
+				gmax=point;
+			}
+			if(point < gmin) 
+			{
+				gmin=point;
+			}
+		}
+	}	
+	double sum = 0.0;
+	int n = 0;	
+	for (int k = 0; k <= 255; k++) 
+	{
+		sum += (double) k * (double) ihist[k];    // x*f(x) 质量矩
+		n   += ihist[k];                          // f(x) 质量
+	}	
+	// do the otsu global thresholding method
+	int threshold = 127;
+	double fmax = -1.0;
+	int n1 = 0;
+	double csum = 0.0;
+	for (k = 0; k < 255; k++) 
+	{
+		n1 += ihist[k];
+		if (!n1) 
+		{ 
+			continue; 
+		}
+		int n2 = n - n1;
+		if (n2 == 0) 
+		{ 
+			break; 
+		}
+		csum += (double) k *ihist[k];
+		int m1 = csum / n1;
+		int m2 = (sum - csum) / n2;
+		int sb = (double) n1 *(double) n2 *(m1 - m2) * (m1 - m2);
+		//note: can be optimized.
+		if (sb > fmax) 
+		{
+			fmax = sb;
+			threshold = k;
+		}
+	}
+	//
+	for(int y2=0;y2<superImage->height;y2++)
+	{
+		for(int x2=0;x2<superImage->width;x2++)
+		{			
+			Pixel pixel = superImage->data[y2*superImage->width+x2];
+			if(pixel>threshold)
+			{
+				superImage->data[y2*superImage->width+x2] = 255;
+			}
+			else
+			{
+				superImage->data[y2*superImage->width+x2] = 0;
+			}
+		}
+	}
+	return 0;
+};
+
+/*************************************************************************
+ *
+ * 函数名称：
+ *   Hough()
+ *
+ * 参数:
+ *   LPSTR lpDIBBits    - 指向源DIB图像指针
+ *   LONG  lWidth       - 源图像宽度（象素数，必须是4的倍数）
+ *   LONG  lHeight      - 源图像高度（象素数）
+ * 返回值:
+ *   BOOL               - 运算成功返回TRUE，否则返回FALSE。
+ *
+ * 说明:
+ * 该函数用于对检测图像中的平行直线。如果图像中有两条平行的直线，则将这两条平行直线
+ * 提取出来。
+ * 
+ * 要求目标图像为只有0和255两个灰度值的灰度图像。
+ ************************************************************************/
+
+// 在计算图像大小时，采用公式：biSizeImage = biWidth' × biHeight。
+// 是biWidth'，而不是biWidth，这里的biWidth'必须是4的整倍数，表示
+// 大于或等于biWidth的，离4最近的整倍数。WIDTHBYTES就是用来计算
+// biWidth'
+#define WIDTHBYTES(bits)    (((bits) + 31) / 32 * 4)
+#define pi 3.1415927
+typedef struct{
+	int Value;
+	int Dist;
+	int AngleNumber;
+}MaxValue;
+int EnhancedImage::line()
+{
+	//
+	LONG lWidth = superImage->width;
+	LONG lHeight = superImage->height;
+	//
+	LPSTR lpDIBBits = (char *)LocalAlloc(LHND, lWidth * lHeight);
+	if (lpDIBBits == NULL)
+	{
+		return false ;
+	}	
+	lpDIBBits = (char *)LocalLock(lpDIBBits);
+	//
+	for (int y=0; y<superImage->height; y++) 
+	{
+		for (int x=0; x<superImage->width; x++) 
+		{
+			unsigned char point = superImage->data[y*superImage->width+x];            
+			lpDIBBits[lWidth * y + x] = point; 
+		}
+	}
+	//		
+	//
+	// 指向源图像的指针
+	LPSTR	lpSrc;
+	// 指向缓存图像的指针
+	LPSTR	lpDst;
+	// 指向变换域的指针
+	LPSTR   lpTrans;
+	// 图像每行的字节数
+	LONG lLineBytes;
+	// 指向缓存DIB图像的指针
+	LPSTR	lpNewDIBBits;
+	HLOCAL	hNewDIBBits;
+	//指向变换域的指针
+	LPSTR	lpTransArea;
+	HLOCAL	hTransArea;
+	//变换域的尺寸
+	int iMaxDist;
+	int iMaxAngleNumber;
+	//变换域的坐标
+	int iDist;
+	int iAngleNumber;
+	//循环变量
+	long i;
+	long j;
+	//像素值
+	unsigned char pixel;
+	//存储变换域中的两个最大值
+	MaxValue MaxValue1;
+	MaxValue MaxValue2;
+	// 暂时分配内存，以保存新图像
+	hNewDIBBits = LocalAlloc(LHND, lWidth * lHeight);
+	if (hNewDIBBits == NULL)
+	{
+		// 分配内存失败
+		return FALSE;
+	}
+	// 锁定内存
+	lpNewDIBBits = (char * )LocalLock(hNewDIBBits);
+	// 初始化新分配的内存，设定初始值为255
+	lpDst = (char *)lpNewDIBBits;
+	memset(lpDst, (BYTE)255, lWidth * lHeight);
+	//计算变换域的尺寸
+	//最大距离
+	iMaxDist = (int) sqrt(lWidth*lWidth + lHeight*lHeight);
+	//角度从0－180，每格2度
+	iMaxAngleNumber = 90;
+	//为变换域分配内存
+	hTransArea = LocalAlloc(LHND, lWidth * lHeight * sizeof(int));
+	if (hNewDIBBits == NULL)
+	{
+		// 分配内存失败
+		return FALSE;
+	}
+	// 锁定内存
+	lpTransArea = (char * )LocalLock(hTransArea);
+	// 初始化新分配的内存，设定初始值为0
+	lpTrans = (char *)lpTransArea;
+	memset(lpTrans, 0, lWidth * lHeight * sizeof(int));
+	// 计算图像每行的字节数
+	for(j = 0; j <lHeight; j++)
+	{
+		for(i = 0;i <lWidth; i++)
+		{
+			// 指向源图像倒数第j行，第i个象素的指针			
+			lpSrc = (char *)lpDIBBits + lWidth * j + i;
+			//取得当前指针处的像素值，注意要转换为unsigned char型
+			pixel = (unsigned char)*lpSrc;
+			//目标图像中含有0和255外的其它灰度值
+			if(pixel != 255 && *lpSrc != 0)
+				return FALSE;
+			//如果是黑点，则在变换域的对应各点上加1
+			if(pixel == 0)
+			{
+				//注意步长是2度
+				for(iAngleNumber=0; iAngleNumber<iMaxAngleNumber; iAngleNumber++)
+				{
+					iDist = (int) fabs(i*cos(iAngleNumber*2*pi/180.0) + j*sin(iAngleNumber*2*pi/180.0));
+					//变换域的对应点上加1
+					*(lpTransArea+iDist*iMaxAngleNumber+iAngleNumber) = *(lpTransArea+iDist*iMaxAngleNumber+iAngleNumber) +1;
+				}
+			}
+		}
+	}
+	//找到变换域中的两个最大值点
+	MaxValue1.Value=0;
+	MaxValue2.Value=0;
+	//找到第一个最大值点
+	for (iDist=0; iDist<iMaxDist;iDist++)
+	{
+		for(iAngleNumber=0; iAngleNumber<iMaxAngleNumber; iAngleNumber++)
+		{
+			if((int)*(lpTransArea+iDist*iMaxAngleNumber+iAngleNumber)>MaxValue1.Value)
+			{
+				MaxValue1.Value = (int)*(lpTransArea+iDist*iMaxAngleNumber+iAngleNumber);
+				MaxValue1.Dist = iDist;
+				MaxValue1.AngleNumber = iAngleNumber;
+			}
+		}
+	}
+	//将第一个最大值点附近清零
+	for (iDist = -9;iDist < 10;iDist++)
+	{
+		for(iAngleNumber=-1; iAngleNumber<2; iAngleNumber++)
+		{
+			if(iDist+MaxValue1.Dist>=0 && iDist+MaxValue1.Dist<iMaxDist && iAngleNumber+MaxValue1.AngleNumber>=0 && iAngleNumber+MaxValue1.AngleNumber<=iMaxAngleNumber)
+			{
+				*(lpTransArea+(iDist+MaxValue1.Dist)*iMaxAngleNumber+(iAngleNumber+MaxValue1.AngleNumber))=0;
+			}
+		}
+	}
+	//找到第二个最大值点
+	for (iDist=0; iDist<iMaxDist;iDist++)
+	{
+		for(iAngleNumber=0; iAngleNumber<iMaxAngleNumber; iAngleNumber++)
+		{
+			if((int)*(lpTransArea+iDist*iMaxAngleNumber+iAngleNumber)>MaxValue2.Value)
+			{
+				MaxValue2.Value = (int)*(lpTransArea+iDist*iMaxAngleNumber+iAngleNumber);
+				MaxValue2.Dist = iDist;
+				MaxValue2.AngleNumber = iAngleNumber;
+			}
+		}
+	}
+	//判断两直线是否平行
+	if(abs(MaxValue1.AngleNumber-MaxValue2.AngleNumber)<=2)
+	{
+		//两直线平行，在缓存图像中重绘这两条直线
+		for(j = 0; j <lHeight; j++)
+		{
+			for(i = 0;i <lWidth; i++)
+			{	
+				// 指向缓存图像倒数第j行，第i个象素的指针			
+				lpDst = (char *)lpNewDIBBits + lLineBytes * j + i;	
+				//如果该点在某一条平行直线上，则在缓存图像上将该点赋为黑
+				//在第一条直线上
+				iDist = (int) fabs(i*cos(MaxValue1.AngleNumber*2*pi/180.0) + j*sin(MaxValue1.AngleNumber*2*pi/180.0));
+				if (iDist == MaxValue1.Dist)
+					*lpDst = (unsigned char)0;
+				//在第二条直线上
+				iDist = (int) fabs(i*cos(MaxValue2.AngleNumber*2*pi/180.0) + j*sin(MaxValue2.AngleNumber*2*pi/180.0));
+				if (iDist == MaxValue2.Dist)
+					*lpDst = (unsigned char)0;
+			}
+		}
+	}
+	// 复制腐蚀后的图像
+	memcpy(lpDIBBits, lpNewDIBBits, lWidth * lHeight);
+	// 释放内存
+	LocalUnlock(hNewDIBBits);
+	LocalFree(hNewDIBBits);
+	// 释放内存
+	LocalUnlock(hTransArea);
+	LocalFree(hTransArea);
+	//
+	//
+	for (int yy=0; yy<superImage->height; yy++) 
+	{
+		for (int xx=0; xx<superImage->width; xx++) 
+		{
+			unsigned char point = lpDIBBits[lWidth * yy + xx];            
+            superImage->data[yy*superImage->width+xx] = point; 
+		}
+	}
+	//
+	LocalUnlock(lpDIBBits);
+	LocalFree(lpDIBBits);
+	// 返回
+	return TRUE;
+}
+int EnhancedImage::roii()
+{
+    int minX = superImage->width;
+	int minY = superImage->height;
+	int maxX = 0;
+	int maxY = 0;
+	//
+	for (int y=0; y<superImage->height; y++) 
+	{
+		for (int x=0; x<superImage->width; x++) 
+		{
+			unsigned char point = superImage->data[y*superImage->width+x];
+			if(point==0)
+			{
+				if(x<minX)
+				{
+					minX = x;					
+				}
+				if(y<minY)
+				{
+                    minY = y;
+				}
+				//
+				if(x>maxX)
+				{
+					maxX = x;
+				}
+				if(y>maxY)
+				{
+					maxY = y;
+				}
+			}
+		}
+	}
+	//
+	if(minX>maxX)
+	{
+		minX=maxX=0;
+	}
+	if(minY>maxY)
+	{
+		minY=maxY=0;
+	}
+	//
+	if(minX>0)
+		minX = minX -1;
+	if(minY>0)
+		minY = minY -1;
+	if(maxX<superImage->width-1)
+		maxX= maxX+1;
+	if(maxY<superImage->height-1)
+		maxY = maxY+1;
+	//
+	int tmpW = maxX - minX+1;
+	int tmpH = maxY - minY+1;
+	SuperImage<Pixel>* tmpD = new SuperImage<Pixel>(tmpW,tmpH);
+	//
+	for(int y2=minY,y3=0;y3<tmpH;y2++,y3++)
+	{
+		for(int x2=minX,x3=0;x3<tmpW;x2++,x3++)
+		{			
+			Pixel pixel = superImage->data[y2*superImage->width+x2];
+			tmpD->data[y3*tmpW+x3] = pixel;
+		}
+	}
+	//
+	if(superImage)
+	{
+		delete superImage;
+		superImage = NULL;
+	}
+	//
+	superImage = tmpD;
+	//
+	return 0;
+};
+/*************************************************************************
+ *
+ * 函数名称：
+ *   TraceDIB()
+ *
+ * 参数:
+ *   LPSTR lpDIBBits    - 指向源DIB图像指针
+ *   LONG  lWidth       - 源图像宽度（象素数，必须是4的倍数）
+ *   LONG  lHeight      - 源图像高度（象素数）
+ * 返回值:
+ *   BOOL               - 运算成功返回TRUE，否则返回FALSE。
+ *
+ * 说明:
+ * 该函数用于对图像进行轮廓跟踪运算。
+ * 
+ * 要求目标图像为只有0和255两个灰度值的灰度图像。
+ ************************************************************************/
+int EnhancedImage::trac()
+{
+	typedef struct
+	{
+		int Height;
+		int Width;
+	}Point;
+	//
+	LONG lWidth = superImage->width;
+	LONG lHeight = superImage->height;
+	//
+	LPSTR lpDIBBits = (char *)LocalAlloc(LHND, lWidth * lHeight);
+	if (lpDIBBits == NULL)
+	{
+		return false ;
+	}	
+	lpDIBBits = (char *)LocalLock(lpDIBBits);
+	//
+	for (int y=0; y<superImage->height; y++) 
+	{
+		for (int x=0; x<superImage->width; x++) 
+		{
+			unsigned char point = superImage->data[y*superImage->width+x];            
+			lpDIBBits[lWidth * y + x] = point; 
+		}
+	}
+	//		
+	//
+	// 指向源图像的指针
+	LPSTR	lpSrc;
+	// 指向缓存图像的指针
+	LPSTR	lpDst;
+	// 指向缓存DIB图像的指针
+	LPSTR	lpNewDIBBits;
+	HLOCAL	hNewDIBBits;
+
+	//循环变量
+	long i;
+	long j;
+	//像素值
+	unsigned char pixel;
+	//是否找到起始点及回到起始点
+	bool bFindStartPoint;
+	//是否扫描到一个边界点
+	bool bFindPoint;
+	//起始边界点与当前边界点
+	Point StartPoint,CurrentPoint;
+	//八个方向和起始扫描方向
+	int Direction[8][2]={{-1,1},{0,1},{1,1},{1,0},{1,-1},{0,-1},{-1,-1},{-1,0}};
+	int BeginDirect;
+	// 图像每行的字节数
+	//LONG lLineBytes;
+	// 计算图像每行的字节数
+	//lLineBytes = WIDTHBYTES(lWidth * 8);
+	// 暂时分配内存，以保存新图像
+	hNewDIBBits = LocalAlloc(LHND, lWidth * lHeight);
+	if (hNewDIBBits == NULL)
+	{
+		// 分配内存失败
+		return FALSE;
+	}
+	// 锁定内存
+	lpNewDIBBits = (char * )LocalLock(hNewDIBBits);
+	// 初始化新分配的内存，设定初始值为255
+	lpDst = (char *)lpNewDIBBits;
+	memset(lpDst, (BYTE)255, lWidth * lHeight);
+	//先找到最左上方的边界点
+	bFindStartPoint = false;
+	for (j = 0;j < lHeight && !bFindStartPoint;j++)
+	{
+		for(i = 0;i < lWidth && !bFindStartPoint;i++)
+		{
+			// 指向源图像倒数第j行，第i个象素的指针			
+			lpSrc = (char *)lpDIBBits + lWidth * j + i;
+			//取得当前指针处的像素值，注意要转换为unsigned char型
+			pixel = (unsigned char)*lpSrc;
+			if(pixel == 0)
+			{
+				bFindStartPoint = true;
+				StartPoint.Height = j;
+				StartPoint.Width = i;
+				// 指向目标图像倒数第j行，第i个象素的指针			
+				lpDst = (char *)lpNewDIBBits + lWidth * j + i;	
+				*lpDst = (unsigned char)0;
+			}		
+		}
+	}
+	//由于起始点是在左下方，故起始扫描沿左上方向
+	BeginDirect = 0;
+	//跟踪边界
+	bFindStartPoint = false;
+	//从初始点开始扫描
+	CurrentPoint.Height = StartPoint.Height;
+	CurrentPoint.Width = StartPoint.Width;
+	while(!bFindStartPoint)
+	{
+		bFindPoint = false;
+		while(!bFindPoint)
+		{
+			//沿扫描方向查看一个像素
+			lpSrc = (char *)lpDIBBits + lWidth * ( CurrentPoint.Height + Direction[BeginDirect][1]) + (CurrentPoint.Width + Direction[BeginDirect][0]);
+			pixel = (unsigned char)*lpSrc;
+			if(pixel == 0)
+			{
+				bFindPoint = true;
+				CurrentPoint.Height = CurrentPoint.Height + Direction[BeginDirect][1];
+				CurrentPoint.Width = CurrentPoint.Width + Direction[BeginDirect][0];
+				if(CurrentPoint.Height == StartPoint.Height && CurrentPoint.Width == StartPoint.Width)
+				{
+					bFindStartPoint = true;
+				}
+				lpDst = (char *)lpNewDIBBits + lWidth * CurrentPoint.Height + CurrentPoint.Width;
+				*lpDst = (unsigned char)0;
+				//扫描的方向逆时针旋转两格
+				BeginDirect--;
+				if(BeginDirect == -1)
+					BeginDirect = 7;
+				BeginDirect--;
+				if(BeginDirect == -1)
+					BeginDirect = 7;
+			}
+			else
+			{
+				//扫描方向顺时针旋转一格
+				BeginDirect++;
+				if(BeginDirect == 8)
+					BeginDirect = 0;
+			}
+		}
+	}
+	// 复制腐蚀后的图像
+	memcpy(lpDIBBits, lpNewDIBBits, lWidth * lHeight);
+	// 释放内存
+	LocalUnlock(hNewDIBBits);
+	LocalFree(hNewDIBBits);
+	//
+	//
+	for (int yy=0; yy<superImage->height; yy++) 
+	{
+		for (int xx=0; xx<superImage->width; xx++) 
+		{
+			unsigned char point = lpDIBBits[lWidth * yy + xx];            
+            superImage->data[yy*superImage->width+xx] = point; 
+		}
+	}
+	//
+	LocalUnlock(lpDIBBits);
+	LocalFree(lpDIBBits);
+	// 返回
+	return TRUE;
+}
+int EnhancedImage::edge()
+{
+	//
+	LONG lWidth = superImage->width;
+	LONG lHeight = superImage->height;
+	//
+	LPSTR lpDIBBits = (char *)LocalAlloc(LHND, lWidth * lHeight);
+	if (lpDIBBits == NULL)
+	{
+		return false ;
+	}	
+	lpDIBBits = (char *)LocalLock(lpDIBBits);
+	//
+	for (int y=0; y<superImage->height; y++) 
+	{
+		for (int x=0; x<superImage->width; x++) 
+		{
+			unsigned char point = superImage->data[y*superImage->width+x];            
+			lpDIBBits[lWidth * y + x] = point; 
+		}
+	}
+	//		
+	//
+	// 指向源图像的指针
+	LPSTR	lpSrc;
+	// 指向缓存图像的指针
+	LPSTR	lpDst;
+	// 指向缓存DIB图像的指针
+	LPSTR	lpNewDIBBits;
+	HLOCAL	hNewDIBBits;
+	//循环变量
+	long i;
+	long j;
+	unsigned char n,e,s,w,ne,se,nw,sw;
+	//像素值
+	unsigned char pixel;
+	// 暂时分配内存，以保存新图像
+	hNewDIBBits = LocalAlloc(LHND, lWidth * lHeight);
+	if (hNewDIBBits == NULL)
+	{
+		// 分配内存失败
+		return FALSE;
+	}
+	// 锁定内存
+	lpNewDIBBits = (char * )LocalLock(hNewDIBBits);
+	// 初始化新分配的内存，设定初始值为255
+	lpDst = (char *)lpNewDIBBits;
+	memset(lpDst, (BYTE)255, lWidth * lHeight);
+	for(j = 1; j <lHeight-1; j++)
+	{
+		for(i = 1;i <lWidth-1; i++)
+		{
+			// 指向源图像倒数第j行，第i个象素的指针	
+			lpSrc = (char *)lpDIBBits + lWidth * j + i;
+			// 指向目标图像倒数第j行，第i个象素的指针
+			lpDst = (char *)lpNewDIBBits + lWidth * j + i;
+			//取得当前指针处的像素值，注意要转换为unsigned char型
+			pixel = (unsigned char)*lpSrc;
+			if(pixel == 0)
+			{
+				*lpDst = (unsigned char)0;
+				nw = (unsigned char)*(lpSrc + lWidth -1);
+				n  = (unsigned char)*(lpSrc + lWidth );
+				ne = (unsigned char)*(lpSrc + lWidth +1);
+				w = (unsigned char)*(lpSrc -1);
+				e = (unsigned char)*(lpSrc +1);
+				sw = (unsigned char)*(lpSrc - lWidth -1);
+				s  = (unsigned char)*(lpSrc - lWidth );
+				se = (unsigned char)*(lpSrc - lWidth +1);
+				//如果相邻的八个点都是黑点
+				if(nw+n+ne+w+e+sw+s+se==0)
+				{
+					*lpDst = (unsigned char)255;
+				}
+			}
+		}
+	}
+	// 复制腐蚀后的图像
+	memcpy(lpDIBBits, lpNewDIBBits, lWidth * lHeight);
+	// 释放内存
+	LocalUnlock(hNewDIBBits);
+	LocalFree(hNewDIBBits);
+	//
+	//
+	for (int yy=0; yy<superImage->height; yy++) 
+	{
+		for (int xx=0; xx<superImage->width; xx++) 
+		{
+			unsigned char point = lpDIBBits[lWidth * yy + xx];            
+            superImage->data[yy*superImage->width+xx] = point; 
+		}
+	}
+	//
+	LocalUnlock(lpDIBBits);
+	LocalFree(lpDIBBits);
+	// 返回
+	return TRUE;
+}
+
+int EnhancedImage::thin()
+{
+	//
+	LONG lWidth = superImage->width;
+	LONG lHeight = superImage->height;
+	//
+	LPSTR lpDIBBits = (char *)LocalAlloc(LHND, lWidth * lHeight);
+	if (lpDIBBits == NULL)
+	{
+		return false ;
+	}	
+	lpDIBBits = (char *)LocalLock(lpDIBBits);
+	//
+	for (int y=0; y<superImage->height; y++) 
+	{
+		for (int x=0; x<superImage->width; x++) 
+		{
+			unsigned char point = superImage->data[y*superImage->width+x];            
+            lpDIBBits[lWidth * y + x] = point; 
+		}
+	}
+	//
+	//
+	LPSTR	lpSrc;				
+	LPSTR	lpDst;	
+	LPSTR	lpNewDIBBits;	
+	HLOCAL	hNewDIBBits;	
+	BOOL bModified;				
+	long i,j,m,n;		
+	
+	BOOL con1;
+	BOOL con2;
+	BOOL con3;
+	BOOL con4;
+	
+	unsigned char nCount;		
+	unsigned char pixel;		
+	unsigned char ne[5][5];	
+	
+	hNewDIBBits = LocalAlloc(LHND, lWidth * lHeight);
+	if (hNewDIBBits == NULL)
+	{
+		return false ;
+	}
+	
+	lpNewDIBBits = (char * )LocalLock(hNewDIBBits);
+	
+	// 初始化新分配的内存，设定初始值为255
+	lpDst = (char *)lpNewDIBBits;
+	memset(lpDst, (BYTE)255, lWidth * lHeight);
+	
+	bModified = TRUE;
+	while(bModified)
+	{
+		bModified = FALSE;
+		lpDst = (char *)lpNewDIBBits;
+		memset(lpDst, (BYTE)255, lWidth * lHeight);
+		
+		for(j = 2; j <lHeight-2; j++)
+		{
+			for(i = 2;i <lWidth-2; i++)
+			{
+				con1 = FALSE;
+				con2 = FALSE;
+				con3 = FALSE;
+				con4 = FALSE;
+				
+				lpSrc = (char *)lpDIBBits + lWidth * j + i;		
+				lpDst = (char *)lpNewDIBBits + lWidth * j + i;
+				
+				pixel = (unsigned char)*lpSrc;
+				if(pixel != 255 && *lpSrc != 0)
+				{
+					continue;
+				}
+				else if(pixel == 255)
+				{
+					continue;
+				}
+				
+				//白色用0代表，黑色用1代表
+				for (m = 0;m < 5;m++ )
+				{
+					for (n = 0;n < 5;n++)
+					{
+						ne[m][n] =(255 - (unsigned char)*(lpSrc + ((4 - m) - 2)*lWidth + n - 2 )) / 255;
+					}
+				}
+				//判断2<=NZ(P1)<=6
+				nCount =  ne[1][1] + ne[1][2] + ne[1][3] 
+					+ ne[2][1]            + ne[2][3] 
+					+ ne[3][1] + ne[3][2] + ne[3][3];
+				if ( nCount >= 2 && nCount <=6)
+				{
+					con1 = TRUE;
+				}
+				
+				//判断Z0(P1)=1
+				nCount = 0;
+				if (ne[1][2] == 0 && ne[1][1] == 1)
+					nCount++;
+				if (ne[1][1] == 0 && ne[2][1] == 1)
+					nCount++;
+				if (ne[2][1] == 0 && ne[3][1] == 1)
+					nCount++;
+				if (ne[3][1] == 0 && ne[3][2] == 1)
+					nCount++;
+				if (ne[3][2] == 0 && ne[3][3] == 1)
+					nCount++;
+				if (ne[3][3] == 0 && ne[2][3] == 1)
+					nCount++;
+				if (ne[2][3] == 0 && ne[1][3] == 1)
+					nCount++;
+				if (ne[1][3] == 0 && ne[1][2] == 1)
+					nCount++;
+				if (nCount == 1)
+					con2 = TRUE;
+				//判断P2*P4*P6=0 or Z0(p4)!=1
+				if (ne[1][2]*ne[2][1]*ne[3][2] == 0)
+				{
+					con3 = TRUE;
+				}
+				else
+				{
+					nCount = 0;
+					if (ne[1][1] == 0 && ne[1][0] == 1)
+						nCount++;
+					if (ne[1][0] == 0 && ne[2][0] == 1)
+						nCount++;
+					if (ne[2][0] == 0 && ne[3][0] == 1)
+						nCount++;
+					if (ne[3][0] == 0 && ne[3][1] == 1)
+						nCount++;
+					if (ne[3][1] == 0 && ne[3][2] == 1)
+						nCount++;
+					if (ne[3][2] == 0 && ne[2][2] == 1)
+						nCount++;
+					if (ne[2][2] == 0 && ne[1][2] == 1)
+						nCount++;
+					if (ne[1][2] == 0 && ne[1][1] == 1)
+						nCount++;
+					if (nCount != 1)
+						con3 = TRUE;
+				}
+				//判断P2*P4*P8=0 or Z0(p2)!=1
+				if (ne[1][2]*ne[2][1]*ne[2][3] == 0)
+				{
+					con4 = TRUE;
+				}
+				else
+				{
+					nCount = 0;
+					if (ne[0][2] == 0 && ne[0][1] == 1)
+						nCount++;
+					if (ne[0][1] == 0 && ne[1][1] == 1)
+						nCount++;
+					if (ne[1][1] == 0 && ne[2][1] == 1)
+						nCount++;
+					if (ne[2][1] == 0 && ne[2][2] == 1)
+						nCount++;
+					if (ne[2][2] == 0 && ne[2][3] == 1)
+						nCount++;
+					if (ne[2][3] == 0 && ne[1][3] == 1)
+						nCount++;
+					if (ne[1][3] == 0 && ne[0][3] == 1)
+						nCount++;
+					if (ne[0][3] == 0 && ne[0][2] == 1)
+						nCount++;
+					if (nCount != 1)
+						con4 = TRUE;
+				}
+				
+				if(con1 && con2 && con3 && con4)
+				{
+					*lpDst = (unsigned char)255;
+					bModified = TRUE;
+				}
+				else
+				{
+					*lpDst = (unsigned char)0;
+				}
+			}
+		}		
+		memcpy(lpDIBBits, lpNewDIBBits, lWidth * lHeight);
+	}
+	memcpy(lpDIBBits, lpNewDIBBits, lWidth * lHeight);
+	LocalUnlock(hNewDIBBits);
+	LocalFree(hNewDIBBits);
+	//
+	//
+	for (int yy=0; yy<superImage->height; yy++) 
+	{
+		for (int xx=0; xx<superImage->width; xx++) 
+		{
+			unsigned char point = lpDIBBits[lWidth * yy + xx];            
+            superImage->data[yy*superImage->width+xx] = point; 
+		}
+	}
+	//
+	LocalUnlock(lpDIBBits);
+	LocalFree(lpDIBBits);
+}
+int EnhancedImage::tidy()
+{
+	//一个更好的算法，是要求整理之后，还保证原来的联通性，现在还不够好
+	int h = this->superImage->height;
+	int w = this->superImage->width;
+	short* src = this->superImage->data;
+	//
+	for (int y=0; y<h; y++) 
+	{
+		for (int x=0; x<w; x++) 
+		{
+			unsigned char o = src[w*(y)+(x)];
+			//
+			unsigned char u = -1;					
+			unsigned char ur = -1;					
+			unsigned char r = -1;					
+			unsigned char br = -1;					
+			unsigned char b = -1;					
+			unsigned char bl = -1;					
+			unsigned char l = -1;					
+			unsigned char ul = -1;	
+			//
+			if(y<h)
+			{
+				u = src[w*(y+1)+(x)];
+			}
+			if(y<h && x< w)
+			{
+				ur =src[w*(y+1)+(x+1)];
+			}
+			if(x<w)
+			{
+				r=src[w*(y)+(x+1)];
+			}
+			if(y>0 && x<w)
+			{
+				br = src[w*(y-1)+(x+1)];
+			}
+			if(y>0)
+			{
+				b = src[w*(y-1)+(x)];
+			}
+			if(y>0 && x>0)
+			{
+				bl = src[w*(y-1)+(x-1)];
+			}
+			if(x>0)
+			{
+				l = src[w*(y)+(x-1)];
+			}
+			if(y<h && x>0)
+			{
+				ul = src[w*(y+1)+(x-1)];
+			}		
+			//
+			if(o==0)
+			{
+				if(r==0 && u==0 &&  br==0)
+				{
+					src[w*(y)+(x+1)] = 255;
+				}
+				if(r==0 && ur==0 &&  r==0)
+				{
+					src[w*(y)+(x+1)] = 255;
+				}
+				if(r==0 && ul==0 &&  br==0)
+				{
+					src[w*(y)+(x+1)] = 255;
+				}
+				//
+				if(l==0 && u==0 &&  bl==0)
+				{
+                    src[w*(y)+(x-1)] = 255;
+				}
+				if(l==0 && u==0 &&  ur==0)
+				{
+                    src[w*(y)+(x-1)] = 255;
+				}
+				if(l==0 && bl==0 &&  ur==0)
+				{
+                    src[w*(y)+(x-1)] = 255;
+				}
+				if(l==0 && bl==0 &&  r==0)
+				{
+                    src[w*(y)+(x-1)] = 255;
+				}
+				if(l==0 && ul==0 &&  r==0)
+				{
+                    src[w*(y)+(x-1)] = 255;
+				}
+				if(l==0 && ul==0 &&  br==0)
+				{
+                    src[w*(y)+(x-1)] = 255;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+int EnhancedImage::kerf()
+{
+	int w = this->superImage->width;
+	int h = this->superImage->height;	
+	short* src = this->superImage->data;
+	//
+	SuperImage<Pixel>* tmpD = new SuperImage<Pixel>(w,h);
+	short* tgt = tmpD->data;
+	//
+	for (int y=0; y<h; y++) 
+	{
+		for (int x=0; x<w; x++) 
+		{
+			int count = 0;
+			unsigned char p = src[y*w+x];
+			tgt[y*w+x] = p;
+			//			
+			if(y<h && src[w*(y+1)+(x)]  == 0)
+			{
+				count = count + 1;
+			}
+			if(y<h && x< w && src[w*(y+1)+(x+1)]  == 0)
+			{
+				count = count + 1;
+			}
+			if(x<w && src[w*(y)+(x+1)]  == 0)
+			{
+				count = count + 1;
+			}
+			if(y>0 && x<w && src[w*(y-1)+(x+1)]  == 0)
+			{
+				count = count + 1;
+			}
+			if(y>0 && src[w*(y-1)+(x)]  == 0)
+			{
+				count = count + 1;
+			}
+			if(y>0 && x>0 && src[w*(y-1)+(x-1)]  == 0)
+			{
+				count = count + 1;
+			}
+			if(x>0 && src[w*(y)+(x-1)]  == 0)
+			{
+				count = count + 1;
+			}
+			if(y<h && x>0 && src[w*(y+1)+(x-1)]  == 0)
+			{
+				count = count + 1;
+			}
+			//
+			if(p == 0 && count > 2)
+			{
+				tgt[y*w+x] = -1;
+			}
+		}
+	}
+	//
+	if(superImage)
+	{
+		delete superImage;
+		superImage = NULL;
+	}
+	//
+	superImage = tmpD;
+	//
+	return 0;
+}
+int EnhancedImage::join()
+{
+	return 0;
+}
+
+//AntiCaptchaPart1.cpp
+#include <stdio.h>
+#include <string>
+#include <windows.h>
+#include "common.h"
+//
+void process(char* loadPathName,char* tempPathName)
+{
+	EnhancedImage otsuImage;
+	otsuImage.load(loadPathName);
+	if(1)
+	{
+		char convPathName[MAX_PATH];
+		sprintf(convPathName,"%s%s",tempPathName,".001.conv.bmp");
+		otsuImage.save(convPathName);
+	}
+	if(1)
+	{
+		char binvPathName[MAX_PATH];
+		sprintf(binvPathName,"%s%s",tempPathName,".002.binv.bmp");
+		otsuImage.binv();
+		otsuImage.save(binvPathName);
+	}
+	if(1)
+	{
+		char otsuPathName[MAX_PATH];
+		sprintf(otsuPathName,"%s%s",tempPathName,".003.otsu.bmp");
+		otsuImage.otsu();
+		otsuImage.save(otsuPathName);
+	}
+	if(0)
+	{
+		char linePathName[MAX_PATH];
+		sprintf(linePathName,"%s%s",tempPathName,".004.line.bmp");
+		otsuImage.line();
+		otsuImage.save(linePathName);
+	}
+	if(1)
+	{
+		char roiiPathName[MAX_PATH];
+		sprintf(roiiPathName,"%s%s",tempPathName,".005.roii.bmp");
+		otsuImage.roii();
+		otsuImage.save(roiiPathName);
+	}
+	EnhancedImage tracImage;
+	tracImage.copy(&otsuImage);
+	if(1)
+	{
+		char tracPathName[MAX_PATH];
+		sprintf(tracPathName,"%s%s",tempPathName,".006.trac.bmp");
+		tracImage.trac();
+		tracImage.save(tracPathName);
+	}
+	//
+	EnhancedImage edgeImage;
+	edgeImage.copy(&otsuImage);
+	if(1)
+	{
+		char edgePathName[MAX_PATH];
+		sprintf(edgePathName,"%s%s",tempPathName,".007.edge.bmp");
+		edgeImage.edge();
+		edgeImage.save(edgePathName);
+	}
+	//
+	EnhancedImage thinImage;
+	thinImage.copy(&otsuImage);
+	if(1)
+	{
+		char thinPathName[MAX_PATH];
+		sprintf(thinPathName,"%s%s",tempPathName,".008.thin.bmp");
+		thinImage.thin();
+		thinImage.save(thinPathName);
+	}
+	if(1)
+	{
+		char tidyPathName[MAX_PATH];
+		sprintf(tidyPathName,"%s%s",tempPathName,".009.tidy.bmp");
+		thinImage.tidy();
+		thinImage.save(tidyPathName);
+	}
+	EnhancedImage kerfImage;
+	kerfImage.copy(&thinImage);
+	if(1)
+	{
+		char kerfPathName[MAX_PATH];
+		sprintf(kerfPathName,"%s%s",tempPathName,".010.kerf.bmp");
+		kerfImage.kerf();
+		kerfImage.save(kerfPathName);
+	}
+	EnhancedImage filmImage;
+	filmImage.copy(&kerfImage);
+	if(1)
+	{	
+		char filmPathName[MAX_PATH];
+		sprintf(filmPathName,"%s%s",tempPathName,".011.film.bmp");
+		filmImage.film(&edgeImage);
+	    filmImage.save(filmPathName);
+	}
+}
+//
+void travel()
+{
+    char homePathName[MAX_PATH];
+	GetCurrentDirectory(MAX_PATH,homePathName);
+	//
+	SetCurrentDirectory(homePathName);
+	SetCurrentDirectory(".\\output");
+	WIN32_FIND_DATA	findDataDelete;
+	HANDLE	hHandleDelete  =  FindFirstFile("*.*", &findDataDelete);
+	int hasNextFileDelete = (hHandleDelete !=  INVALID_HANDLE_VALUE);
+	while (hasNextFileDelete !=  0)
+	{
+		char deletePathName[MAX_PATH];
+		GetFullPathName(findDataDelete.cFileName, MAX_PATH, deletePathName, NULL);
+		printf("Delete %s\n",deletePathName);
+		DeleteFile(deletePathName);
+        hasNextFileDelete = FindNextFile(hHandleDelete, &findDataDelete);
+	}
+	if(hHandleDelete !=  INVALID_HANDLE_VALUE)
+	{
+		FindClose(hHandleDelete);
+	}
+	//
+	//
+	SetCurrentDirectory(homePathName);
+	SetCurrentDirectory(".\\sample");
+	WIN32_FIND_DATA	findData;
+	HANDLE	hFindHandle  =  FindFirstFile("*.jpg", &findData);
+	int hasNextFile = (hFindHandle !=  INVALID_HANDLE_VALUE);
+	while (hasNextFile !=  0)
+	{
+		char loadPathName[MAX_PATH];
+		GetFullPathName(findData.cFileName, MAX_PATH, loadPathName, NULL);		
+		//
+		char tempPathName[MAX_PATH];
+        sprintf(tempPathName,"%s",loadPathName);
+		for(int i=strlen(tempPathName);i>=0;i--)
+		{
+			if(tempPathName[i]=='\\')
+			{
+				break;
+			}
+			else
+			{
+				tempPathName[i]='\0';
+			}
+		}
+		strcat(tempPathName,"..\\output\\");
+		strcat(tempPathName,findData.cFileName);
+		//
+		printf("Process %s to %s\n",loadPathName,tempPathName);
+		process(loadPathName,tempPathName);
+		//
+		//
+		hasNextFile = FindNextFile(hFindHandle, &findData);
+	}
+	if(hFindHandle !=  INVALID_HANDLE_VALUE)
+	{
+		FindClose(hFindHandle);
+	}
+}
+//
+void main(int argc, char* argv[])
+{
+	printf("Anti Captcha ...\n");
+	travel();
+	printf("Anti Captcha !!!\n");
+}
+

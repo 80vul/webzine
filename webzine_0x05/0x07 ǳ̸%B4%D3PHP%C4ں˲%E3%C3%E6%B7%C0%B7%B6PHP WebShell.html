@@ -1,0 +1,457 @@
+﻿<html>
+<head>
+<meta content="text/html; charset=utf-8" http-equiv="Content-Type">		
+<title>浅谈从PHP内核层面防范PHP WebShell</title>
+</head>
+<body>
+<h4>浅谈从PHP内核层面防范PHP WebShell</h4>
+<pre style="width: 100%; word-wrap:break-word;">
+By 咖啡(k4kup8_0x4154_gmail.com)
+
+
+[目录]
+
+1. 简述
+2. php的执行流程
+3. php的生命周期
+4. php源代码分析以及功能性代码的实现
+5. 总结
+6. 参考资料
+                                       
+
+一、简述
+
+    依据php特定运行环境、php某些特定函数缺陷、php普通函数可以实现变化多端的php 
+webshell，php版本的scanwebshell也不是太给力。php webshell功能最大化就是实现文件、
+目录、命令、数据库等操作，这些都是基于php代码实现的。把相关功能化的php函数运行参
+数提取出来，然后做一个判断，这样就能从本质上防范php webshell，在php这个层面实现
+其安全的最大化。这里介绍下通过编写php扩展来实现这个思路，当然需要的话也可以重新
+编译php源代码来实现。
+
+    首先我们了解下php的执行流程、php生命周期，接下来通过分析具体函数的php源代码
+来实现功能性代码。
+    	
+
+二、php的执行流程
+
+2.1 scanner
+    
+    将PHP代码转换为Tokens，详见代码Zend/zend_language_scanner.l。
+       
+2.2 parser
+    
+    将Tokens转换成表达式，详见代码Zend/zend_language_parser.y。
+       
+2.3 compile
+    
+    将表达式编译成opcode。opcode存放在op_array中。
+       
+2.4 execute
+    
+    Zend Engine调用zend_execute来执行op_array，输出结果。
+
+
+三、php的生命周期
+
+3.1 STARTUP
+
+    1、初始化引擎和核心组件。
+    2、解析php.ini。
+    3、初始化静态构建的模块(MINIT)。
+    4、初始化共享模块(MINIT)。
+
+3.2 ACTIVATION
+
+    1、初始化环境变量、变量。
+    2、激活静态构建的模块(RINIT) 。
+    3、激活共享模块(RINIT) 。
+    
+3.3 RUNTIME
+    
+    1、编译和执行php.ini中auto_prepend_file选项指定的文件。
+    2、编译和执行所请求的文件。
+    3、编译和执行php.ini中auto_append_file选项指定的文件。
+    
+3.4 DEACTIVATION
+      
+    1、调用用户指定的退出函数。
+    2、销毁对象实例。
+    3、停用模块(RSHUTDOWN)。
+    4、清空输出。
+    5、清理环境。
+    6、释放剩余的非持久内存。
+
+3.5 SHUTDOWN
+      
+    1、关闭启动的全部模块(MSHUTDOWN)。
+    2、关闭引擎。
+
+
+四、php源代码分析以及功能性代码的实现
+    
+    php函数分为两种：一种是Zend的函数，这类函数数量比较少，比如eval函数。第二种
+是由PHP_FUNCTION宏编写的，这类函数数量比较多，比如system函数。实现对两类函数在提
+取运行时的参数的方式也不相同，比如处理eval函数用重写zend_compile_string的方式，
+而处理system函数则对HashTable操作。下边就以eval函数和system函数为例进行分析、代
+码实现。
+   
+4.1 eval函数代码分析与代码实现
+    
+    首先我们看php源代码中eval函数是如何实现的，部分代码如下：
+
+--code-------------------------------------------------------------------------                     
+    // PHPSRC/Zend/zend_vm_def.h
+        
+    if (inc_filename-&gt;type!=IS_STRING) {
+		tmp_inc_filename = *inc_filename;
+		zval_copy_ctor(&amp;tmp_inc_filename);
+		convert_to_string(&amp;tmp_inc_filename);
+		inc_filename = &amp;tmp_inc_filename;
+	}    
+        
+    case ZEND_EVAL: {
+                /* 调用zend_make_compiled_string_description函数 */
+				char *eval_desc = zend_make_compiled_string_description(&quot;eval()&#34;d code&quot; TSRMLS_CC);
+                /* 调用zend_compile_string函数 */
+				new_op_array = zend_compile_string(inc_filename, eval_desc TSRMLS_CC);
+				efree(eval_desc);
+			}
+    /* 执行op_array */
+    zend_execute(new_op_array TSRMLS_CC);
+    
+    //PHPSRC/Zend/zend.c
+         
+    #define COMPILED_STRING_DESCRIPTION_FORMAT &quot;%s(%d) : %s&quot;
+    ZEND_API char *zend_make_compiled_string_description(char *name TSRMLS_DC)
+    {
+    	zend_spprintf(&amp;compiled_string_description, 0, COMPILED_STRING_DESCRIPTION_FORMAT, cur_filename, cur_lineno, name);
+    	return compiled_string_description; //返回值包含&quot;eval()&#34;d code&quot;字符串
+    }
+ 
+    //PHPSRC/Zend/zend_compile.c
+         
+    ZEND_API zend_op_array *(*zend_compile_string)(zval *source_string, char *filename TSRMLS_DC);
+    
+    zend_compile_string一个函数指针。下边看下引擎初始化的时候对zend_compile_string的操作。
+        
+    int zend_startup(zend_utility_functions *utility_functions, char **extensions, int start_builtin_functions)
+    {
+    	zend_compile_string = compile_string; //对zend_compile_string函数的地址赋值
+-------------------------------------------------------------------------------    	
+            
+    只要检查op_array中是否含有&quot;eval()&#34;d code&quot;字符串，就能判断是否是在执行eval函数。
+    在引擎初始化的时候，默认会将compile_string函数的地址赋值给zend_compile_string，
+compile_string函数则返回一个指向zend_op_array的指针。如果能在php代码编译之前对
+zend_compile_string进行重写，那么就能达到劫持的目的。根据php的生命周期，对
+zend_compile_string进行重写应该放在STARTUP或者ACTIVATION这两个阶段，而编写php扩
+展所使用到的PHP_MINIT_FUNCTION和PHP_RINIT_FUNCTION宏就分别处在STARTUP和ACTIVATION
+这个两个阶段，这是为什么呢？我们先看下php.h代码中对PHP_MINIT_FUNCTION宏的定义。
+    
+--code-------------------------------------------------------------------------    
+    #define PHP_MINIT_FUNCTION		ZEND_MODULE_STARTUP_D
+    //ZEND_MODULE_STARTUP_D定义在zend_API.h
+    #define ZEND_MODULE_STARTUP_D(module)		int ZEND_MODULE_STARTUP_N(module)(INIT_FUNC_ARGS)
+    //ZEND_MODULE_STARTUP_N定义在zend_API.h
+    #define ZEND_MODULE_STARTUP_N(module)       zm_startup_##module
+    //INIT_FUNC_ARGS定义在zend_modules.h
+    #define INIT_FUNC_ARGS		int type, int module_number TSRMLS_DC
+-------------------------------------------------------------------------------
+    
+    PHP_MINIT_FUNCTION(module)的原型就是：
+
+--code-------------------------------------------------------------------------    
+zm_startup_module(int type, int module_number TSRMLS_DC)
+-------------------------------------------------------------------------------
+
+    同样的PHP_RINIT_FUNCTION(module)的原型为:
+    
+--code-------------------------------------------------------------------------     
+zm_activate_module(int type, int module_number TSRMLS_DC)
+-------------------------------------------------------------------------------
+
+    关于对eval函数运行参数截取分析的实现代码如下：
+
+--code-------------------------------------------------------------------------
+    #define OVECCOUNT 30
+    /* 具体正则表达式要按照具体的需求来写，下面正则仅为测试用 */
+    #define eval_regex_value   &quot;(((chr\\(\\d*?\\)|base64_decode\\(|eval|gzinflate\\(|system|shell_exec|popen|pclose|proc_close|proc_get_status|proc_nice|proc_terminate|exec|passthru|show_source|escapeshellcmd|escapeshellarg system|shell_exec|popen|pclose|proc_open|proc_close|proc_get_status|proc_nice|proc_terminate|exec|passthru|show_source|escapeshellcmd|escapeshellarg)\\([{}&#34;$\\w\\s]*?\\));).*?&quot;
+    
+    static zend_op_array* (*old_compile_string)(zval *source_string, char *filename TSRMLS_DC);
+    static zend_op_array* safe_compile_string(zval *source_string, char *filename TSRMLS_DC);
+    
+    PHP_RINIT_FUNCTION(safe) //PHP_MINIT_FUNCTION(safe)也可
+    {
+    	safe_hook_execute();
+    	return SUCCESS;
+    }
+    
+    PHP_RSHUTDOWN_FUNCTION(safe) //PHP_MSHUTDOWN_FUNCTION(safe)也可
+    {
+    	safe_unhook_execute();
+    	return SUCCESS;
+    }   
+    
+    int matchpattern(char *src, char *pattern, int i) //正则匹配函数
+    {              
+    	pcre *re;
+    	const char *error;
+    	int erroffset;
+    	int ovector[OVECCOUNT];
+    	int rc;
+    	char *substring_start;
+    	int substring_length;
+    	TSRMLS_FETCH();
+    	
+    	re = pcre_compile(pattern, PCRE_CASELESS|PCRE_DOTALL, &amp;error, &amp;erroffset, NULL);
+    	if(re == NULL) {
+    		//printf(&quot;PCRE compilation failed at offset %d: %s\n&quot;, erroffset, error);
+    		return 1;
+    	}
+    	
+    	rc = pcre_exec(re, NULL, src, strlen(src), 0, 0, ovector, OVECCOUNT);	
+    	if(rc &gt;= 0) {
+    		substring_start = src + ovector[2*i];
+    		substring_length = ovector[2*i+1] - ovector[2*i];
+    		
+    		printf(&quot;Match_result: %.*s\n&quot;, substring_length, substring_start);
+    		printf(&quot;Filename    : %-40s\n&quot;, zend_get_executed_filename(TSRMLS_C));
+    		printf(&quot;Line        : %-50i\n&quot;, zend_get_executed_lineno(TSRMLS_C));
+    	}
+    	free(re);
+    	return rc;
+    }    
+    
+    static zend_op_array *safe_compile_string(zval *source_string, char *filename TSRMLS_DC)
+    {
+    	char *eval_strings;
+    	int x;
+        zend_op_array *op_array;
+     	
+        op_array = old_compile_string(source_string, filename TSRMLS_CC);
+    
+        /* 过滤非eval函数 */
+    	if(!strstr(op_array-&gt;filename, &quot;eval()&#34;d code&quot;)) {
+    		return old_compile_string(source_string, filename TSRMLS_CC);
+    	}
+    	/* 将source_string字符串赋值给eval_strings */
+    	eval_strings = estrndup(Z_STRVAL_P(source_string), Z_STRLEN_P(source_string));
+    
+    	printf(&quot;%s&quot;,&quot;\n&quot;);
+    	printf(&quot;Function    : %-40s\n&quot;, &quot;eval&quot;);	
+    	x = matchpattern(eval_strings, eval_regex_value, 1);
+    	if (x &lt; 0)
+    	{
+    		return old_compile_string(source_string, filename TSRMLS_CC);
+    	}
+    	else if(x &gt;= 0)
+    		return FALSE;
+    }
+    
+    int safe_hook_execute()
+    { 			
+    	old_compile_string = zend_compile_string;
+    	zend_compile_string = safe_compile_string;
+        system_hook_system();  //对应后边对system函数的操作   
+    	return TRUE;
+    }
+    
+    int safe_unhook_execute()
+    {	
+    	zend_compile_string = old_compile_string;    
+    	return TRUE;
+    }
+-------------------------------------------------------------------------------    
+    
+4.2 system函数代码分析与代码实现 
+    
+    首先我们看php源代码中system函数是如何实现的，部分代码如下：
+
+--code-------------------------------------------------------------------------         
+    //PHPSRC\ext\standard\exec.c
+      
+    PHP_FUNCTION(system)
+    {  
+        /* 调用php_exec_ex函数 */
+        php_exec_ex(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1);
+    }
+       
+    static void php_exec_ex(INTERNAL_FUNCTION_PARAMETERS, int mode)
+    {
+    	char *cmd;
+
+    	if (!ret_array) {
+		/* 调用php_exec函数 */
+    		ret = php_exec(mode, cmd, NULL, return_value TSRMLS_CC);
+    	} else {
+    		if (Z_TYPE_P(ret_array) != IS_ARRAY) {
+    			zval_dtor(ret_array);
+    			array_init(ret_array);
+    		}
+    		ret = php_exec(2, cmd, ret_array, return_value TSRMLS_CC);
+-------------------------------------------------------------------------------
+
+    接下来看php_exec函数的定义。
+
+--code-------------------------------------------------------------------------  
+    int php_exec(int type, char *cmd, zval *array, zval *return_value TSRMLS_DC)
+    {
+    	char *cmd_p, *b, *c, *d=NULL;
+
+    	if (PG(safe_mode)) {
+    		cmd_p = php_escape_shell_cmd(d);
+    		efree(d);
+    		d = cmd_p;
+    	} else {
+    		cmd_p = cmd;
+
+        #ifdef PHP_WIN32
+    	    fp = VCWD_POPEN(cmd_p, &quot;rb&quot;); //调用VCWD_POPEN函数
+-------------------------------------------------------------------------------    	    
+ 
+    接下来看VCWD_POPEN函数的定义。
+
+--code-------------------------------------------------------------------------     
+    //TSRM\tsrm_virtual_cwd.c
+    
+    #ifdef TSRM_WIN32 //以windows平台为例
+    
+    CWD_API FILE *virtual_popen(const char *command, const char *type TSRMLS_DC)
+    {
+    	return popen_ex(command, type, CWDG(cwd).cwd, NULL);//调用popen_ex函数
+    }
+-------------------------------------------------------------------------------
+    
+    接下来看popen_ex函数的定义。
+    
+--code-------------------------------------------------------------------------
+//TSRM\tsrm_win32.c
+
+TSRM_API FILE *popen_ex(const char *command, const char *type, const char *cwd, char *env)
+{
+	char *cmd;
+    
+	cmd = (char*)malloc(strlen(command)+strlen(TWG(comspec))+sizeof(&quot; /c &quot;));
+	sprintf(cmd, &quot;%s /c %s&quot;, TWG(comspec), command);
+	if (!CreateProcess(NULL, cmd, &amp;security, &amp;security, security.bInheritHandle, NORMAL_PRIORITY_CLASS|CREATE_NO_WINDOW, env, cwd, &amp;startup, &amp;process)) {
+		return NULL;
+	}
+	free(cmd); 	
+-------------------------------------------------------------------------------    	
+
+    上边是system函数执行的参数传递的过程，在这个过程中如果可以截取函数执行的参数
+的话，就可以分析参数是否包含危险的关键字。为了方便编写扩展程序，我们直接在exec.c
+中php_exec函数中添加截取代码，也就是在php_exec_ex函数调用php_exec函数之前的位置。
+添加如下代码即可获取执行的参数：
+
+--code-------------------------------------------------------------------------   
+   	x = matchpattern(cmd, system_regex_value, 0);//调用正则函数进行判断
+	if(x &gt;= 0) RETURN_FALSE;
+-------------------------------------------------------------------------------
+	
+    下边我们分析怎么实现对system函数的重写，这里主要参照main.c文件中实现php.ini
+中disable_functions功能的php_disable_functions函数，它调用了zend_disable_function。
+
+--code-------------------------------------------------------------------------   
+ZEND_API int zend_disable_function(char *function_name, uint function_name_length TSRMLS_DC)
+{
+	if (zend_hash_del(CG(function_table), function_name, function_name_length+1)==FAILURE) {
+		return FAILURE;
+	}
+	disabled_function[0].fname = function_name;
+	return zend_register_functions(NULL, disabled_function, CG(function_table), MODULE_PERSISTENT TSRMLS_CC);
+}
+-------------------------------------------------------------------------------
+    
+    同样我们可以用zend_hash_del函数将system从function_table中删除，然后注册新的
+zend函数，以达到对system函数劫持的目的。
+
+    system作为一个执行系统命令的函数，在这里进行了禁用操作，没有使用正则处理函数
+进行参数的检查，当然也可以根据具体的需求进行具体的操作。
+  
+    实现代码如下：
+    
+--code-------------------------------------------------------------------------    
+    /* 声明导出函数 */
+    PHP_FUNCTION(system1)
+    {  
+    	printf(&quot;%s&quot;,&quot;\n&quot;);
+    	printf(&quot;Function    : %-40s\n&quot;, &quot;system&quot;);
+    	printf(&quot;Filename    : %-40s\n&quot;, zend_get_executed_filename(TSRMLS_C));
+    	printf(&quot;Line        : %-50i\n&quot;, zend_get_executed_lineno(TSRMLS_C));
+    	printf(&quot;%s&quot;,&quot;system function is disabled.&quot;);  
+    }
+    
+    /* 声明 Zend 函数块 */
+    zend_function_entry hook_system_functions[] = {      
+      PHP_FALIAS(system, system1, NULL) // 创建system别名
+      {NULL, NULL, NULL}
+    };
+    
+    /* 创建system hook函数 */
+    int safe_hook_system()
+    {
+      TSRMLS_FETCH();
+      /* 删除function_table中的system函数 */
+      zend_hash_del(CG(function_table), &quot;system&quot;, sizeof(&quot;system&quot;));
+    
+    /* 注册新zend函数 */
+    #ifndef ZEND_ENGINE_2
+      zend_register_functions(hook_system_functions, NULL, MODULE_PERSISTENT TSRMLS_CC);
+    #else
+      zend_register_functions(NULL, hook_system_functions, NULL, MODULE_PERSISTENT TSRMLS_CC);
+    #endif
+      return 0;
+    }
+-------------------------------------------------------------------------------
+    
+4.3 demo运行效果
+    
+4.3.1 加载php扩展
+
+-------------------------------------------------------------------------------
+C:\phpext&gt;type php.ini | findstr &quot;^extension=&quot;
+extension=php_safe.dll 
+
+C:\phpext&gt;php 3.php
+
+Function    : system
+Filename    : C:\phpext\3.php
+Line        : 3
+
+system function is disabled.
+
+Function    : eval
+Match_result: exec(&#34;ver&#34;);
+Filename    : C:\phpext\3.php
+Line        : 9
+-------------------------------------------------------------------------------
+
+4.3.2 不加载php扩展   
+    
+-------------------------------------------------------------------------------
+C:\phpext&gt;type php.ini | findstr &quot;^extension=&quot;
+
+
+C:\phpext&gt;php 3.php
+
+Microsoft Windows XP [版本 5.1.2600]
+-------------------------------------------------------------------------------
+
+ 
+五、总结
+    
+    实现php webshell的功能性函数众多，我们做到控制关键性的函数足以。当然实现函数
+截取要根据函数的情况进行一一的分析，然后做相应的判断。
+
+    最后要感谢下SuperHei，文章不足之处请斧正。
+
+
+六、参考资料
+
+[1] php源代码  http://www.php.net
+[2] PHP Extension Writing http://talks.somabo.de/200903_montreal_php_extension_writing.pdf
+
+-EOF-
+</pre>
+</body>
+</html>

